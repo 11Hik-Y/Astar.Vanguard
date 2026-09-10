@@ -1,60 +1,54 @@
-# Astar Vanguard / 星锋战术支援
+# Astar Vanguard
 
-Astar Vanguard 是面向 **SPT 4.0.13 / EFT 40087 / Fika Host & Solo Host** 的本地 AI 战术支援 Mod。
+**English** · [简体中文](README.zh-CN.md)
 
-本项目由 Astar 独立维护，最初基于 MiyakoCarryService 的 CC BY-NC-SA 4.0 源码进行改编；当前已形成独立的产品名称、版本线、UI、干员系统与后续开发路线。原项目归因、固定基线与修改说明见 `THIRD_PARTY_NOTICES.md`。
+AI tactical support mod for **SPT 4.0.13 / EFT 40087**.
 
-## 当前能力
+The goal is to turn AI teammates into a persistent squad that can be recruited, managed, and reused across raids instead of treating every raid as a fresh set of temporary bots. Development currently focuses on the Vanguard Command Center, persistent operators, and the tactical support systems around them.
 
-- 服务端商人：**星锋指挥部**
-- 兼容 Trader ID：`6952ced4bcc1dd1e3c80dfcb`
-- 本地固定干员：37 名
-- 干员身份：由 Server 生成并持久化到角色 Profile
-- 干员能力：由 Fika Host / Solo Host 在 EFT 原生 Bot Settings 上执行
-- 指挥中心 UI：通过本地 `Astar.UI.dll` 提供基础 UI Runtime
-- 不包含赞助名单、赞助平台刷新、自动更新或联网版本检查
+## Current features
 
-## 干员能力目录
+- Adds the **Vanguard Command Center** with its own management interface.
+- Provides **37 persistent operators**, each with an individual callsign, role, and combat profile.
+- Supports permanent recruitment and preserves the identity of recruited operators.
+- Supports **1–4 operator deployments** managed directly from the Command Center.
+- Gives operators individual aim, vision, hearing, reaction, aggression, damage, enemy-memory, and cover characteristics.
+- Continues to maintain tactical AI commands, interactions, and Fika integration.
 
-每名干员拥有独立的：
+## Supported environment
 
-`Aim / Vision / Hearing / Reaction / Aggression / DamageCoeff / EnemyMemory / Cover`
+Development and verification currently target:
 
-能力目录位于 `Server/Assets/database/operators/vanguard.json`。Client 构建时嵌入同一份 JSON，避免 Server 与 Host 使用两份手工维护的数据。
+- **SPT 4.0.13**
+- **EFT Build 40087**
+- **BigBrain**
+- **Fika Host / Solo Host**
 
-## 权威边界
+Other SPT / EFT versions are not assumed to be compatible. Fika work currently focuses on Host / Solo Host behavior; full remote-client behavior will continue to be verified as development progresses.
 
-1. **Server**：选择干员身份、写入并持久化角色 Profile。
-2. **Fika Host / Solo Host**：创建 AI 时读取已固化代号，并应用原生 EFT AI 参数。
-3. **Remote Client**：不负责判定这些 AI 能力；当前没有为干员能力新增 Packet / RPC。
+## Installation and usage
 
-## 源码构建
+Installable builds will be published through GitHub Releases. Once a release package is available, copy it into the matching SPT installation using the directory structure included in the archive. Do not use GitHub's automatically generated `Source code` archives as mod packages.
 
-`Ref/` 是本地编译依赖缓存，不属于源码仓库，也不会上传到 GitHub。它包含 EFT、SPT、BepInEx、HarmonyX、Fika、BigBrain 等本机构建所需程序集。
+The main entry point is **Vanguard Command** in the trader interface. The Command Center is used to inspect the roster, permanently recruit operators, and manage the current deployment squad.
 
-先准备依赖：
+The client requires BigBrain. Fika integration also requires a compatible Fika installation. Required UI runtime components will be included with official release packages, so players will not need to obtain development sources separately.
 
-```powershell
-.\Scripts\copy_ref_dlls.ps1
-```
+## Source
 
-脚本默认从本机 SPT 4.0.13 / EFT 40087 环境复制第三方程序集，并尝试从同级本地 `Astar.UI` 仓库的 `artifacts/bin/Release` 或 `Debug` 中获取 `Astar.UI.dll`。也可以显式指定：
-
-```powershell
-.\Scripts\copy_ref_dlls.ps1 -AstarUiDll "C:\path\to\Astar.UI.dll"
-```
-
-当前 Astar.UI 仍是内部开发依赖，尚未单独公开源码。
-
-然后构建：
+Source code is maintained in this repository. The current codebase explicitly targets SPT 4.0.13 / EFT 40087; local dependencies matching that environment are required for source builds.
 
 ```powershell
 dotnet build .\Astar.Vanguard.slnx -c Debug
 dotnet build .\Astar.Vanguard.slnx -c Release
 ```
 
-## 许可证
+## Open source and origin
 
-Astar Vanguard 作为包含 MiyakoCarryService 改编内容的组合衍生作品，按 **CC BY-NC-SA 4.0** 发布。原始部分继续归其各自作者所有；Astar 新增的原创代码、重构、文档、产品名称与新系统归 Astar 所有，并随本组合衍生作品按上述许可证发布。
+Development originally started from the CC BY-NC-SA 4.0 source of **MiyakoCarryService**. Since then, the project has been substantially reworked and expanded across branding, UI, persistent operators, behavior logic, Fika integration, and its overall development direction.
 
-本项目与 MiyakoCarryService、Plain Craft Launcher、SPT、Fika 及其他第三方项目不存在官方隶属、赞助或背书关系。详细归因与第三方说明见 `THIRD_PARTY_NOTICES.md`。
+Astar Vanguard is distributed under **CC BY-NC-SA 4.0**. Rights in original code and assets remain with their respective authors and contributors. New original code, refactoring, documentation, product identity, and systems are distributed as part of the derivative project under the same license.
+
+Upstream attribution, the fixed derivative baseline, and third-party notices are documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+License: **[English](LICENSE)** · [简体中文](LICENSE.zh-CN.md)

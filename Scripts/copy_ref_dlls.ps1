@@ -1,13 +1,17 @@
 [CmdletBinding()]
 param(
     [string]$WorkspaceFolder = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
-    [string]$GameRoot = "D:\game\SPT\client\EFT-40087__SPT-4.0.x",
-    [string]$SptLayer = "D:\game\SPT\client\_layers\SPT-4.0.13-40087-2891fd4",
+    [string]$GameRoot = $env:ASTAR_VANGUARD_GAME_ROOT,
+    [string]$SptLayer = $env:ASTAR_VANGUARD_SPT_LAYER,
     [string]$AstarUiDll = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($GameRoot) -or [string]::IsNullOrWhiteSpace($SptLayer)) {
+    throw "Pass -GameRoot and -SptLayer, or set ASTAR_VANGUARD_GAME_ROOT and ASTAR_VANGUARD_SPT_LAYER."
+}
 
 $refDir = Join-Path $WorkspaceFolder "Ref"
 if (-not (Test-Path -LiteralPath $refDir)) {

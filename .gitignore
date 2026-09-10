@@ -376,3 +376,7 @@ fika_vt_report_url.txt
 # Local-only compile-time dependencies and IDE state.
 /Ref/
 /.idea/
+
+# Local IDE workspace configuration.
+*.code-workspace
+
