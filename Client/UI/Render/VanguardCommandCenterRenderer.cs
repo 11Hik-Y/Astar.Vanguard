@@ -19,24 +19,23 @@ namespace Astar.Vanguard.Client.UI.Render
         private readonly Action<string> _recruitOperator;
         private readonly Action<string> _toggleDeployment;
         private readonly Action _refresh;
-        private readonly Dictionary<string, PclListItemView> _operatorViews = new();
-        private readonly List<PclProgressBarView> _statViews = new();
-        private readonly List<PclButtonView> _deploymentButtons = new();
-        private readonly List<RectTransform> _pageTransitionTargets = new();
+        private readonly Dictionary<string, AstarListItemView> _operatorViews = new();
+        private readonly List<AstarProgressBarView> _statViews = new();
+        private readonly List<AstarButtonView> _deploymentButtons = new();
 
         private RectTransform _root;
-        private PclMotionHost _motion;
-        private PclComponentFactory _components;
-        private PclCardView _rosterCard;
-        private PclCardView _detailCard;
-        private PclCardView _deploymentCard;
+        private AstarMotionHost _motion;
+        private AstarComponentFactory _components;
+        private AstarCardView _rosterCard;
+        private AstarCardView _detailCard;
+        private AstarCardView _deploymentCard;
         private AstarScrollView _rosterScroll;
         private Text _detailRole;
         private Text _detailStatus;
         private Text _identity;
         private Text _statusMessage;
-        private PclButtonView _primaryAction;
-        private PclButtonView _refreshButton;
+        private AstarButtonView _primaryAction;
+        private AstarButtonView _refreshButton;
         private string _selectedOperatorId;
         private bool _selectedIsRecruited;
         private string[] _deploymentOperatorIds = Array.Empty<string>();
@@ -74,7 +73,7 @@ namespace Astar.Vanguard.Client.UI.Render
 
             _rosterCard.SetTitle($"干员名册  {state.RecruitedCount} / {state.TotalCount}");
             _deploymentCard.SetTitle($"出击编队  {state.DeployedCount} / {state.MaxDeployment}");
-            _statusMessage.text = state.StatusMessage ?? string.Empty;
+            SetTextIfChanged(_statusMessage, state.StatusMessage);
 
             foreach (var item in state.Operators)
             {
@@ -90,11 +89,7 @@ namespace Astar.Vanguard.Client.UI.Render
 
             RenderDetail(state.Selected, animate);
             RenderDeployment(state.Deployment);
-            if (firstRender)
-            {
-                PclPageTransitions.Enter(_motion, _pageTransitionTargets);
-            }
-        }
+}
 
         public void Dispose()
         {
@@ -104,6 +99,9 @@ namespace Astar.Vanguard.Client.UI.Render
             }
 
             _disposed = true;
+            if (_rosterCard?.Root is not null) _context.UnregisterTransitionTarget(_rosterCard.Root);
+            if (_detailCard?.Root is not null) _context.UnregisterTransitionTarget(_detailCard.Root);
+            if (_deploymentCard?.Root is not null) _context.UnregisterTransitionTarget(_deploymentCard.Root);
             _motion?.StopAllMotions();
             if (_root is not null)
             {
@@ -115,7 +113,6 @@ namespace Astar.Vanguard.Client.UI.Render
             _operatorViews.Clear();
             _statViews.Clear();
             _deploymentButtons.Clear();
-            _pageTransitionTargets.Clear();
         }
 
         private void Build(VanguardCommandCenterViewState state)
@@ -128,8 +125,8 @@ namespace Astar.Vanguard.Client.UI.Render
                 Vector2.zero,
                 Vector2.zero
             );
-            _motion = _root.gameObject.AddComponent<PclMotionHost>();
-            _components = new PclComponentFactory(_context, _motion);
+            _motion = _context.Motion;
+            _components = _context.Components;
 
             var backdropRect = _context.Factory.CreateRect(
                 _root,
@@ -139,9 +136,9 @@ namespace Astar.Vanguard.Client.UI.Render
                 Vector2.zero,
                 Vector2.zero
             );
-            var backdrop = backdropRect.gameObject.AddComponent<PclRoundedRectGraphic>();
-            backdrop.Radius = PclDesignTokens.RadiusCard;
-            backdrop.color = PclDesignTokens.Canvas;
+            var backdrop = backdropRect.gameObject.AddComponent<AstarRoundedRectGraphic>();
+            backdrop.Radius = AstarDesignTokens.RadiusCard;
+            backdrop.color = AstarDesignTokens.Canvas;
             backdrop.raycastTarget = false;
 
             _rosterCard = _components.CreateCard(
@@ -172,9 +169,9 @@ namespace Astar.Vanguard.Client.UI.Render
                 new Vector2(0f, -6f)
             );
 
-            _pageTransitionTargets.Add(_rosterCard.Root);
-            _pageTransitionTargets.Add(_detailCard.Root);
-            _pageTransitionTargets.Add(_deploymentCard.Root);
+            _context.RegisterTransitionTarget(_rosterCard.Root);
+            _context.RegisterTransitionTarget(_detailCard.Root);
+            _context.RegisterTransitionTarget(_deploymentCard.Root);
 
             BuildRoster(state);
             BuildDetail();
@@ -226,13 +223,13 @@ namespace Astar.Vanguard.Client.UI.Render
                 content,
                 "Role",
                 string.Empty,
-                PclDesignTokens.TypographySubtitle,
+                AstarDesignTokens.TypographySubtitle,
                 TextAnchor.MiddleLeft,
                 new Vector2(0f, 0.88f),
                 new Vector2(0.68f, 1f),
                 new Vector2(4f, 0f),
                 Vector2.zero,
-                PclDesignTokens.ForegroundMuted
+                AstarDesignTokens.ForegroundMuted
             );
             _detailRole.raycastTarget = false;
 
@@ -240,13 +237,13 @@ namespace Astar.Vanguard.Client.UI.Render
                 content,
                 "RosterStatus",
                 string.Empty,
-                PclDesignTokens.TypographyBody,
+                AstarDesignTokens.TypographyBody,
                 TextAnchor.MiddleRight,
                 new Vector2(0.64f, 0.88f),
                 Vector2.one,
                 Vector2.zero,
                 new Vector2(-4f, 0f),
-                PclDesignTokens.Success,
+                AstarDesignTokens.Success,
                 FontStyle.Bold
             );
             _detailStatus.raycastTarget = false;
@@ -277,13 +274,13 @@ namespace Astar.Vanguard.Client.UI.Render
                 content,
                 "Identity",
                 string.Empty,
-                PclDesignTokens.TypographyCaption,
+                AstarDesignTokens.TypographyCaption,
                 TextAnchor.MiddleLeft,
                 new Vector2(0.015f, 0.005f),
                 new Vector2(0.62f, 0.09f),
                 Vector2.zero,
                 Vector2.zero,
-                PclDesignTokens.ForegroundMuted
+                AstarDesignTokens.ForegroundMuted
             );
             _identity.raycastTarget = false;
 
@@ -316,13 +313,13 @@ namespace Astar.Vanguard.Client.UI.Render
                 _deploymentCard.Root,
                 "StatusMessage",
                 string.Empty,
-                PclDesignTokens.TypographyCaption,
+                AstarDesignTokens.TypographyCaption,
                 TextAnchor.MiddleRight,
                 new Vector2(0.54f, 1f),
                 Vector2.one,
                 new Vector2(0f, -40f),
-                new Vector2(-PclDesignTokens.SpacingLg, 0f),
-                PclDesignTokens.ForegroundMuted
+                new Vector2(-AstarDesignTokens.SpacingLg, 0f),
+                AstarDesignTokens.ForegroundMuted
             );
             _statusMessage.raycastTarget = false;
 
@@ -355,24 +352,24 @@ namespace Astar.Vanguard.Client.UI.Render
             if (detail is null)
             {
                 _detailCard.SetTitle("未选择干员");
-                _detailRole.text = "从左侧名册选择一名干员。";
-                _detailStatus.text = string.Empty;
-                _identity.text = string.Empty;
+                SetTextIfChanged(_detailRole, "从左侧名册选择一名干员。");
+                SetTextIfChanged(_detailStatus, string.Empty);
+                SetTextIfChanged(_identity, string.Empty);
                 _primaryAction.SetText("不可用");
                 _primaryAction.SetEnabled(false);
                 for (var index = 0; index < _statViews.Count; index++)
                 {
-                    _statViews[index].Label.text = string.Empty;
+                    SetTextIfChanged(_statViews[index].Label, string.Empty);
                     _statViews[index].SetValue(0f, string.Empty, animate);
                 }
                 return;
             }
 
             _detailCard.SetTitle(detail.Name);
-            _detailRole.text = detail.Role ?? string.Empty;
-            _detailStatus.text = detail.RosterStatus ?? string.Empty;
-            _detailStatus.color = PclComponentFactory.GetToneColor(detail.StatusTone);
-            _identity.text = detail.Identity ?? string.Empty;
+            SetTextIfChanged(_detailRole, detail.Role);
+            SetTextIfChanged(_detailStatus, detail.RosterStatus);
+            _detailStatus.color = AstarComponentFactory.GetToneColor(detail.StatusTone);
+            SetTextIfChanged(_identity, detail.Identity);
             _primaryAction.SetText(detail.PrimaryActionText);
             _primaryAction.SetEnabled(detail.PrimaryActionEnabled);
             _primaryAction.SetSelected(detail.IsRecruited && !detail.IsDeployed && detail.PrimaryActionEnabled);
@@ -381,13 +378,13 @@ namespace Astar.Vanguard.Client.UI.Render
             {
                 if (index >= detail.Stats.Count)
                 {
-                    _statViews[index].Label.text = string.Empty;
+                    SetTextIfChanged(_statViews[index].Label, string.Empty);
                     _statViews[index].SetValue(0f, string.Empty, animate);
                     continue;
                 }
 
                 var stat = detail.Stats[index];
-                _statViews[index].Label.text = stat.Label;
+                SetTextIfChanged(_statViews[index].Label, stat.Label);
                 _statViews[index].SetValue(stat.Normalized, stat.Value, animate);
             }
         }
@@ -405,6 +402,19 @@ namespace Astar.Vanguard.Client.UI.Render
             }
         }
 
+        private static void SetTextIfChanged(Text target, string value)
+        {
+            if (target is null)
+            {
+                return;
+            }
+
+            var next = value ?? string.Empty;
+            if (!string.Equals(target.text, next, StringComparison.Ordinal))
+            {
+                target.text = next;
+            }
+        }
         private void OnPrimaryAction()
         {
             if (string.IsNullOrWhiteSpace(_selectedOperatorId))

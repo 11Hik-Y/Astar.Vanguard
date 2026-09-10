@@ -21,11 +21,14 @@ namespace Astar.Vanguard.Client.UI
         private static VanguardCommandCenterSnapshot _snapshot;
         private static string _selectedOperatorId;
         private static string _statusMessage = "指挥中心已连接。";
-        private static bool _closeTraderOnUiClose;
+        private static VanguardCommandCenterReturnTarget _returnTarget = VanguardCommandCenterReturnTarget.MainMenu;
 
         public static bool IsOpen => _handle?.IsActive == true;
 
-        public static bool TryOpen(TraderScreensGroup traderScreen)
+        public static bool TryOpen(
+            TraderScreensGroup traderScreen,
+            VanguardCommandCenterReturnTarget returnTarget = VanguardCommandCenterReturnTarget.MainMenu
+        )
         {
             if (IsOpen)
             {
@@ -39,7 +42,7 @@ namespace Astar.Vanguard.Client.UI
 
                 _snapshot = snapshot;
                 _traderScreen = traderScreen;
-                _closeTraderOnUiClose = true;
+                _returnTarget = returnTarget;
                 _statusMessage = "指挥中心已连接。";
                 _selectedOperatorId =
                     snapshot.Deployment.FirstOrDefault()
@@ -51,8 +54,9 @@ namespace Astar.Vanguard.Client.UI
                     "星锋指挥中心",
                     Build,
                     "永久干员招募 · 名册管理 · 1-4 人出击编队",
-                    OnUiClosed,
-                    closeOnEscape: true
+                    onClosed: null,
+                    closeOnEscape: true,
+                    onClosedWithReason: OnUiClosed
                 );
 
                 if (!AstarUiApi.TryOpen(request, out var handle) || handle is null)
@@ -85,7 +89,7 @@ namespace Astar.Vanguard.Client.UI
                 return;
             }
 
-            _closeTraderOnUiClose = false;
+            _returnTarget = VanguardCommandCenterReturnTarget.Trader;
             _handle.Close();
         }
 
@@ -232,13 +236,17 @@ namespace Astar.Vanguard.Client.UI
             Render();
         }
 
-        private static void OnUiClosed()
+        private static void OnUiClosed(AstarScreenCloseReason reason)
         {
             var traderScreen = _traderScreen;
-            var closeTrader = _closeTraderOnUiClose;
+            var returnTarget = _returnTarget;
             ResetSession();
 
-            if (closeTrader && traderScreen is not null)
+            if (
+                reason != AstarScreenCloseReason.HostDestroyed
+                && returnTarget == VanguardCommandCenterReturnTarget.MainMenu
+                && traderScreen is not null
+            )
             {
                 CloseTraderScreen(traderScreen);
             }
@@ -321,7 +329,7 @@ namespace Astar.Vanguard.Client.UI
             _traderScreen = null;
             _snapshot = null;
             _selectedOperatorId = null;
-            _closeTraderOnUiClose = false;
+            _returnTarget = VanguardCommandCenterReturnTarget.MainMenu;
         }
     }
 }

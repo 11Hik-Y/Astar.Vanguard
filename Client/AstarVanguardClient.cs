@@ -29,7 +29,7 @@ namespace Astar.Vanguard.Client
 {
     [BepInPlugin(McsGUID, McsPluginName, BepInExClientVersion)]
     [BepInProcess(EFTapp)]
-    [BepInDependency("com.astar.ui", BepInDependency.DependencyFlags.HardDependency)]
+    [BepInDependency("com.astar.ui", "0.3.0.0")]
     [BepInDependency(BigBrainGUID, BepInDependency.DependencyFlags.HardDependency)]
     public sealed class AstarVanguardPlugin : BaseUnityPlugin
     {

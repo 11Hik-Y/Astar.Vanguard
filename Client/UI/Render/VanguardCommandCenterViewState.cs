@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Astar.UI.Controls;
 using Astar.Vanguard.Client.Models;
 using UnityEngine;
 
@@ -12,7 +13,7 @@ namespace Astar.Vanguard.Client.UI.Render
         public string Title { get; init; }
         public string Info { get; init; }
         public string Status { get; init; }
-        public PclTone StatusTone { get; init; }
+        public AstarTone StatusTone { get; init; }
         public bool IsSelected { get; init; }
         public bool IsEnabled { get; init; }
     }
@@ -30,7 +31,7 @@ namespace Astar.Vanguard.Client.UI.Render
         public string Name { get; init; }
         public string Role { get; init; }
         public string RosterStatus { get; init; }
-        public PclTone StatusTone { get; init; }
+        public AstarTone StatusTone { get; init; }
         public string Identity { get; init; }
         public bool IsRecruited { get; init; }
         public bool IsDeployed { get; init; }
@@ -96,10 +97,10 @@ namespace Astar.Vanguard.Client.UI.Render
                             ? "已招募"
                             : "待招募",
                     StatusTone = state.Deployed
-                        ? PclTone.Accent
+                        ? AstarTone.Accent
                         : state.Recruited
-                            ? PclTone.Success
-                            : PclTone.Muted,
+                            ? AstarTone.Success
+                            : AstarTone.Muted,
                     IsSelected = state.Id == selected?.Id,
                     IsEnabled = true,
                 })
@@ -170,7 +171,7 @@ namespace Astar.Vanguard.Client.UI.Render
                         ? "永久在册 · 当前出击编队"
                         : "永久在册"
                     : "尚未招募",
-                StatusTone = selected.Recruited ? PclTone.Success : PclTone.Warning,
+                StatusTone = selected.Recruited ? AstarTone.Success : AstarTone.Warning,
                 Identity = identity,
                 IsRecruited = selected.Recruited,
                 IsDeployed = selected.Deployed,

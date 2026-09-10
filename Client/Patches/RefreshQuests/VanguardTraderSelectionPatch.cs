@@ -36,7 +36,10 @@ namespace Astar.Vanguard.Client.Patches.RefreshQuests
                 return;
             }
 
-            VanguardCommandCenterScreen.TryOpen(__instance);
+            VanguardCommandCenterScreen.TryOpen(
+                __instance,
+                VanguardCommandCenterReturnTarget.Trader
+            );
         }
     }
 }
