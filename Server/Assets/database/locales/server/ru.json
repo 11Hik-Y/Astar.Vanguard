@@ -1,0 +1,23 @@
+{
+    "Mcs/SaveOrderInfoException": "Ошибка при сохранении информации о заказе",
+    "Mcs/SaveMcsPlayerProfileException": "Ошибка при сохранении профиля игрока Mcs",
+    "Mcs/CleaningUpOutdatedMcsPlayerProfile": "Очистка устаревшего профиля игрока Mcs {0}",
+    "Mcs/CannotDeleteFileNotFound": "Невозможно удалить, файл не найден: {0}",
+    "Mcs/FailedLoadMcsPlayerProfile": "Не удалось загрузить профиль игрока Mcs.",
+    "Mcs/AccountidIsInvaild": "Идентификатор аккаунта {0} недействителен",
+    "Mcs/VanguardTraderOrderDescription": "Информация о заказе:\nКоличество наёмников: {0}\nТип наёмника: {1}\nУровень обслуживания: {2}\nДлительность: {3} час(ов)\nПовышение цены: {4}%",
+    "Mcs/VanguardTraderTicketDescription": "Информация билета:\nВычеты: {0}%",
+    "Mcs/VanguardTraderSubCommand": "Префикс перед командой {0}:\n{1}",
+    "Mcs/VanguardTraderAvailableCommandsPrefix": "Доступные команды для \"{0}\" ",
+    "Mcs/SpawnTypeCommon": "ЧВК",
+    "Mcs/VanguardTraderOrderCommandHelp1": "mcs {0}\norder command:\nmcs {1} {{количество}} {{тип}} {{уровень обслуживания}} {{длительнось}}\n - уровень обслуживания: 1~5\n - продолжительность: целое число, в часах\n - Пример: mcs {2} 4 0 5 24\nЭто означает: (4 наёмника) (ЧВК) (уровнем обслуживания 5) (длительность 24 часа)\nС вас будет взиматься плата за круглосуточное обслуживание 4 игроков в рублях.",
+    "Mcs/VanguardTraderOrderCommandHelp2": "Базовая цена:\nЧВК:\nУровень обслуживания 1: {0} Рублей в час\nУровень обслуживания 2: {1} Рублей в час\nУровень обслуживания 3: {2} рублей/час\nУровень обслуживания 4: {3} рублей/час\nУровень обслуживания 5: {4} рублей/час",
+    "Mcs/VanguardTraderOrderCommandHelp3": "Список типов наёмников:\n",
+    "Mcs/VanguardTraderTicketCommandHelp1": "mcs {0}\nTicket command:\nmcs {1} {{процент}}\nпроцентное соотношение: 1~100%\nПример:: mcs {2} 80\nЭто означает, что вы берете билет, чтобы снять 80% штрафа за повышение цены; после оплаты штрафа, штраф за повышение цены на 80% будет снят",
+    "Mcs/VanguardTraderTicketCommandHelp2": "Базовая цена:\n {0} рублей/процентов",
+    "Mcs/CurrentPriceIncrease": "Текущее повышение цены: {0}%",
+    "Mcs/GenerateProfileError": "Ошибка генерации carry service profile для {0}, вместо него был создан профиль по умолчанию",
+    "Mcs/McsInventoryModeRagfairRefuse": "В режиме инвентаря наёмника нельзя добавить предложения на барахолку.",
+    "Mcs/NewVersionNotify": "Доступна новая версия VanguardCarryService: {0} ---> {1}",
+    "Mcs/McsBotPlayerExpired": "Expired"
+}

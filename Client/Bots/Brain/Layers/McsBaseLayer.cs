@@ -1,0 +1,1966 @@
+using System;
+using System.Collections.Concurrent;
+using System.Threading.Tasks;
+using Comfort.Common;
+using DrakiaXYZ.BigBrain.Brains;
+using EFT;
+using EFT.Interactive;
+using EFT.InventoryLogic;
+using HarmonyLib;
+using Astar.Vanguard.Client.Bots.Brain.Logics;
+using Astar.Vanguard.Client.Datas;
+using Astar.Vanguard.Client.Extensions;
+using Astar.Vanguard.Client.Mgrs;
+using Astar.Vanguard.Client.Models;
+using Astar.Vanguard.Client.Utils;
+using UnityEngine;
+using UnityEngine.AI;
+
+namespace Astar.Vanguard.Client.Bots.Brain.Layers
+{
+    public abstract class McsBaseLayer : CustomLayer
+    {
+        public McsBaseLayer(BotOwner botOwner, int priority) : base(botOwner, priority)
+        {
+            InitActionMap();
+        }
+
+        public bool? _isMcsBotPlayer = null;
+        public bool IsMcsBotPlayer => _isMcsBotPlayer ??= BotOwner.IsMcsBotPlayer;
+        protected ConcurrentDictionary<Type, Func<bool>> _endActionMap;
+        public bool _haveCoverToShoot = false;
+        public float _nextHoldPositionTime = 0f;
+        public float _goToCoverTime = 0f;
+        public CustomNavigationPoint _currentNavigationPoint = null;
+        public float _nextPatrolTime = 0f;
+        public float _nextShootTime = 0f;
+        public float _nextWeaponSwitchTime = 0f;
+        public float _nextMeleeCheckTime = 0f;
+        public float _nextLootingCheckTime = 0f;
+        public float _nextVaultCheckTime = 0f;
+        public float _nextUpdatePosTime = 0f;
+        public float _nextHealCheckTime = 0f;
+        public float _nextStimCheckTime = 0f;
+        public float _nextDeactivateCheckTime = 0f;
+        public Vector3? _currentMoveTarget = null;
+        public Vector3? _lastTargetPos = Vector3.zero;
+        public Vector3[] _lastCalcCorners = null;
+        public bool _lastCanRunResult = false;
+        public int _currentMoveRetries = 0;
+        public int _currentHealTimes = 0;
+        public int _currentLootingRetries = 0;
+        public int _currentDeactivateRetries = 0;
+        public float _currentHealTimeout = 10f;
+        public float _nextAnimatorFixTime = 0f;
+        public string _cachedProxyTargetId;
+        public StationaryWeaponData _cachedStationaryWeaponData;
+        public float _scanPhase = 0f;
+        public const float SCANPERIOD = 4f;
+        public const float SCANDISTANCE = 30f;
+        public const float SCANPITCHDOWN = 2f;
+        public const float LEAD_POSITION_CHANGE_THRESHOLD = 2f;
+        public const float TOO_FAR_FROM_LEAD_DISTANCE = 20f;
+        public const float TOO_CLOSE_FROM_LEAD_DISTANCE = 2f;
+        public const float HEAL_CHECK_INTERVAL = 1f;
+        public const float VAULT_CHECK_INTERVAL = 2f;
+        public const float VAULT_HEIGHT_THRESHOLD = 1.5f;
+        public const float SPHERECAST_RADIUS = 0.1f;
+        public const float SPHERECAST_DISTANCE = 2f;
+        public const float DIRECTION_ALIGNMENT_THRESHOLD = 0.85f;
+        public const float ENTER_COMMON_LOOTING_COLDDOWN = 10f;
+        public const float LOOTING_FINNISHED_COLDDOWN = 1f;
+        public const float WEAPON_SWITCH_COOLDOWN = 1f;
+        public const float MELEE_CHECK_INTERVAL = 0.5f;
+
+        public McsBotPlayerData McsBotPlayerData
+        {
+            get
+            {
+                return field ??= BotOwner.GetMcsBotPlayerData();
+            }
+        }
+
+        public string Name
+        {
+            get
+            {
+                return field ??= GetType().Name;
+            }
+        }
+
+        public override string GetName()
+        {
+            return Name;
+        }
+
+        public override void Start()
+        {
+            base.Start();
+            if (AstarVanguardPlugin.SAINInstalled)
+            {
+                // 如果不执行这段代码，当护航从SAIN的Layer回到Mcs的Layer时，就会卡住不动（以前会，现在似乎删除也不会再发生了，但避免意外，依旧保留）
+                SAINUtils.ResetSAINLayer(BotOwner);
+            }
+            if (McsBotPlayerData != null)
+            {
+                McsBotPlayerData.IsMcsLayerActive = true;
+            }
+        }
+
+        public override void Stop()
+        {
+            base.Stop();
+            if (McsBotPlayerData != null)
+            {
+                McsBotPlayerData.IsMcsLayerActive = false;
+            }
+        }
+
+        protected SubtitlesMgr SubtitlesMgr => MgrAccessor.Get<SubtitlesMgr>();
+
+        public override bool IsCurrentActionEnding()
+        {
+            if (CurrentAction == null)
+            {
+                return true;
+            }
+
+            return _endActionMap.TryGetValue(CurrentAction.Type, out var endFunc) ? endFunc() : true;
+        }
+
+        public void RegisterAction(Type logicType, Func<bool> func)
+        {
+            if (_endActionMap == null)
+            {
+                _endActionMap = new();
+            }
+
+            _endActionMap.AddOrUpdate(logicType, _logicType => func,
+                (_logicType, oldFunc) =>
+                {
+                    oldFunc = func;
+                    return oldFunc;
+                }
+            );
+        }
+
+        public virtual void InitActionMap()
+        {
+            RegisterAction(typeof(GoToCoverPointLogic), EndGoToCoverPoint);
+            RegisterAction(typeof(HealLogic), EndHeal);
+            RegisterAction(typeof(StationaryHealLogic), EndHeal);
+            RegisterAction(typeof(RunToCoverLogic), EndRunToCover);
+            RegisterAction(typeof(SimplePatrolLogic), EndSimplePatrol);
+            RegisterAction(typeof(HoldPositionLogic), EndHoldPosition);
+            RegisterAction(typeof(GoToPointLogic), EndGoToPoint);
+            RegisterAction(typeof(GoToProtectLogic), EndGoToProtect);
+            RegisterAction(typeof(GoToEnemyLogic), EndGoToEnemy);
+            RegisterAction(typeof(AttackMovingLogic), EndAttackMoving);
+            RegisterAction(typeof(GoToLootTargetLogic), EndGoToLootTarget);
+            RegisterAction(typeof(ShootFromPlaceLogic), EndShootFromPlace);
+            RegisterAction(typeof(ShootFromCoverLogic), EndShootFromCover);
+            RegisterAction(typeof(ShootToSmokeLogic), EndShootToSmoke);
+            RegisterAction(typeof(ShootFromStationaryLogic), EndShootFromStationary);
+            RegisterAction(typeof(RunToEnemyLogic), EndRunToEnemy);
+            RegisterAction(typeof(GoToExfiltrationPointNodeLogic), EndGoToExfiltrationPoint);
+            RegisterAction(typeof(MeleeAttackLogic), EndMeleeAttack);
+            RegisterAction(typeof(RunToPointLogic), EndGoToPoint);
+            RegisterAction(typeof(EscortToPointByWayLogic), EndEscortToPointByWay);
+            RegisterAction(typeof(FlashedLogic), EndFlashed);
+            RegisterAction(typeof(DeactivateMineLogic), EndDeactivateMine);
+            RegisterAction(typeof(RunAwayGrenadeLogic), EndRunAwayGrenade);
+            RegisterAction(typeof(RunAwayArtilleryLogic), EndRunAwayArtillery);
+            RegisterAction(typeof(RunAwayBTRLogic), EndRunAwayBTR);
+            RegisterAction(typeof(GoToExcuteProxyActionLogic), EndGoToExcuteProxyAction);
+            RegisterAction(typeof(DropTargetLootLogic), EndDropTargetLootLogic);
+            RegisterAction(typeof(HealStimulatorsLogic), EndHealStimulators);
+            RegisterAction(typeof(GoToBtrLogic), EndGoToBtr);
+        }
+
+        public virtual bool EndHeal()
+        {
+            if (!BotOwner.Medecine.Using)
+            {
+                return true;
+            }
+
+            if (BaseLogicLayerSimpleAbstractClass.CheckMedsToStop(BotOwner))
+            {
+                _currentHealTimes = 0;
+                return true;
+            }
+
+            if (Time.time > _nextHealCheckTime)
+            {
+                if (GetHealTimeout(out var timeout))
+                {
+                    _currentHealTimeout = timeout;
+                }
+                _nextHealCheckTime = Time.time + HEAL_CHECK_INTERVAL;
+                _currentHealTimes += 1;
+            }
+
+            if (_currentHealTimes >= _currentHealTimeout)
+            {
+                BotOwner.WeaponManager.CheckWeaponReady();
+                if (!CheckFirearmsAnimatorState())
+                {
+                    BotOwner.WeaponManager.CheckWeaponReady();
+                }
+                BotOwner.TryResetHandsState();
+                _currentHealTimes = 0;
+                return true;
+            }
+
+            return false;
+        }
+
+        public virtual bool GetHealTimeout(out float timeout)
+        {
+            timeout = 0f;
+            if (BotOwner.Medecine.Stimulators.Using)
+            {
+                timeout = 3f;
+                return true;
+            }
+            if (BotOwner.Medecine.FirstAid.Have2Do)
+            {
+                timeout = 10f;
+                return true;
+            }
+            if (BotOwner.Medecine.SurgicalKit.HaveWork)
+            {
+                timeout = 20f;
+                return true;
+            }
+            return false;
+        }
+
+        public virtual bool EndHealStimulators()
+        {
+            if (BotOwner.Medecine.Stimulators.Using)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        public virtual bool EndGoToBtr()
+        {
+            return true;
+        }
+
+        public virtual bool EndRunToCover()
+        {
+            var mcsLeadPlayerPos = BotOwner.GetMcsLeadPlayerPos(McsBotPlayerData);
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+
+            if (mcsLeadPlayerPos != null)
+            {
+                TryFindCover(mcsLeadPlayerPos);
+                UpdateCoverToShoot();
+                if (!BotOwner.Memory.IsInCover && !_haveCoverToShoot)
+                {
+                    return true;
+                }
+            }
+
+            if (BotOwner.Memory.IsInCover)
+            {
+                return true;
+            }
+
+            if (!BotOwner.CanSprintPlayer)
+            {
+                return true;
+            }
+
+            if (IsDogFighting())
+            {
+                return true;
+            }
+
+            if (BotOwner.Memory.CurCustomCoverPoint != null && BotOwner.Memory.CurCustomCoverPoint.IsSpotted)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public virtual void TryFindCover(Vector3 mcsLeadPlayerPos)
+        {
+            if (_goToCoverTime < Time.time)
+            {
+                _goToCoverTime = Time.time + 1f;
+                var coverSearchData = new CoverSearchData(mcsLeadPlayerPos, BotOwner.CoverSearchInfo, CoverShootType.hide, TOO_FAR_FROM_LEAD_DISTANCE, 0f, CoverSearchType.closerToSelectedPoint, null, null, new Vector3?(mcsLeadPlayerPos), ECheckSHootHide.shootAndHide, new CoverSearchDefenceDataClass(0f), PointsArrayType.byShootType, true, null, null, "Default");
+                _currentNavigationPoint = BotOwner.BotsGroup.CoverPointMaster.GetCoverPointMain(coverSearchData, true);
+                if (_currentNavigationPoint != null)
+                {
+                    if (mcsLeadPlayerPos.McsSqrDistance(_currentNavigationPoint.Position) < TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE && !_currentNavigationPoint.IsSpotted)
+                    {
+                        BotOwner.Memory.IsInCover = true;
+                        return;
+                    }
+                }
+                BotOwner.Memory.IsInCover = false;
+            }
+        }
+
+        public virtual void UpdateCoverToShoot()
+        {
+            if (McsBotPlayerData?.LeadPlayer == null)
+            {
+                return;
+            }
+
+            if (_nextHoldPositionTime < Time.time)
+            {
+                _nextHoldPositionTime = Time.time + 1f;
+                Vector3 leadPos;
+
+                if (McsBotPlayerData.LeadPlayer.HealthController == null)
+                {
+                    return;
+                }
+
+                if (McsBotPlayerData.LeadPlayer.HealthController.IsAlive)
+                {
+                    leadPos = McsBotPlayerData.LeadPlayer.Position;
+                }
+                else if (BotOwner.BotFollower.HaveBoss)
+                {
+                    leadPos = BotOwner.BotFollower.BossToFollow.Position;
+                }
+                else
+                {
+                    leadPos = BotOwner.Position;
+                }
+                _currentNavigationPoint = FollowerCheckData();
+                if (_currentNavigationPoint != null && _currentNavigationPoint.IsFreeById(BotOwner.Id) && !_currentNavigationPoint.IsSpotted)
+                {
+                    var sqrMagnitude = leadPos.McsSqrDistance(_currentNavigationPoint.Position);
+                    if (sqrMagnitude >= 75f * 75f)
+                    {
+                        _haveCoverToShoot = false;
+                        return;
+                    }
+                    if (ProtectCareKill())
+                    {
+                        _haveCoverToShoot = _currentNavigationPoint.CanIShootToEnemy;
+                    }
+                    else
+                    {
+                        _haveCoverToShoot = true;
+                    }
+                    if (_haveCoverToShoot && (BotOwner.Memory.CurCustomCoverPoint == null || BotOwner.Memory.CurCustomCoverPoint.Id != _currentNavigationPoint.Id))
+                    {
+                        BotOwner.Memory.BotCurrentCoverInfo.Spotted();
+                        BotOwner.Memory.BotCurrentCoverInfo.SetCover(_currentNavigationPoint, true);
+                        return;
+                    }
+                }
+                else
+                {
+                    _haveCoverToShoot = false;
+                }
+            }
+        }
+
+        public virtual bool WasHitRecently(float timeframe)
+        {
+            return (Time.time - BotOwner.Memory.LastTimeHit) < timeframe;
+        }
+
+        public virtual bool EndEatDrink()
+        {
+            return true;
+        }
+
+        public virtual bool EndGoToCoverPoint()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            var mcsLeadPlayerPos = BotOwner.GetMcsLeadPlayerPos(McsBotPlayerData);
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+
+            if (mcsLeadPlayerPos != null)
+            {
+                TryFindCover(mcsLeadPlayerPos);
+                UpdateCoverToShoot();
+                if (!BotOwner.Memory.IsInCover && !_haveCoverToShoot)
+                {
+                    return true;
+                }
+            }
+
+            if (BotOwner.Memory.IsInCover)
+            {
+                return true;
+            }
+
+            var goalEnemy = BotOwner.Memory.GoalEnemy;
+            if (goalEnemy != null && goalEnemy.IsVisible && goalEnemy.CanShoot)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public virtual bool EndSimplePatrol()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            if (ShouldEndPatrol())
+            {
+                return true;
+            }
+
+            if (BotOwner.PatrollingData.Way.PatrolType == PatrolType.reserved)
+            {
+                return true;
+            }
+
+            if (McsBotPlayerData.LeadPlayer != null && McsBotPlayerData.LeadPlayer.HealthController.IsAlive)
+            {
+                return true;
+            }
+
+            if (BotOwner.BotFollower.HaveBoss && !BotOwner.Boss.IamBoss)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public virtual bool EndGoToPoint()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            if (BotOwner.GoToSomePointData.IsCome())
+            {
+                if (McsBotPlayerData.HasDecision(Decisions.ShouldGoToPoint) && BotOwner.Position.McsSqrDistance(McsBotPlayerData.TargetPos.Value) <= 2f * 2f)
+                {
+                    McsBotPlayerData.SetDecision([Decisions.ShouldFollowMe, Decisions.ShouldKeepFormation], Decisions.ShouldHoldPosition);
+                    BotOwner.TalkMsg(new McsMsg
+                    {
+                        PhraseTrigger = EPhraseTrigger.OnPosition
+                    });
+                }
+                return true;
+            }
+            else
+            {
+                var mcsLeadPlayerPos = BotOwner.GetMcsLeadPlayerPos(McsBotPlayerData);
+                if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+                {
+                    CheckStuck();
+                }
+
+                if (Time.time - BotOwner.Mover.LastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
+                {
+                    BotOwner.StopMove();
+                    BotOwner.Mover.AllowTeleport();
+                    BotOwner.GetPlayer.Teleport(McsBotPlayerData.LeadPlayer.Position, true);
+                    var playerPosition = McsBotPlayerData.Player.Position;
+                    BotOwner.Mover.LastGoodCastPoint = BotOwner.Mover.PrevSuccessLinkedFrom_1 = BotOwner.Mover.PrevLinkPos = BotOwner.Mover.PositionOnWayInner = playerPosition;
+                    BotOwner.Mover.LastGoodCastPointTime = Time.time;
+                    BotOwner.Mover.PrevPosLinkedTime_1 = 0f;
+                    BotOwner.Mover.SetPlayerToNavMesh(playerPosition);
+                    BotOwner.Mover.RecalcWay();
+                    BotOwner.Mover.Pause = true;
+                    UpdateLeadNearMoveTarget(mcsLeadPlayerPos, out float nextTime);
+                    if (_currentMoveTarget.HasValue)
+                    {
+                        BotOwner.GoToSomePointData.SetPoint(_currentMoveTarget.Value);
+                    }
+                    return true;
+                }
+
+                if (Time.time - BotOwner.Mover.LastTimePosChanged > 6f)
+                {
+                    if (McsBotPlayerData.HasDecision(Decisions.ShouldGoToPoint) && BotOwner.Position.McsSqrDistance(McsBotPlayerData.TargetPos.Value) <= 2f * 2f)
+                    {
+                        McsBotPlayerData.SetDecision([Decisions.ShouldFollowMe, Decisions.ShouldKeepFormation], Decisions.ShouldHoldPosition);
+                        BotOwner.TalkMsg(new McsMsg
+                        {
+                            PhraseTrigger = EPhraseTrigger.OnPosition
+                        });
+                    }
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        public async Task DelaySetDecisions(float delaySeconds, string[] exclude = null, params string[] decisions)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(delaySeconds));
+            if (McsBotPlayerData != null)
+            {
+                McsBotPlayerData.SetDecision(exclude, decisions);
+            }
+        }
+
+        public virtual bool EndEscortToPointByWay()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            var hasEscortToBtr = McsBotPlayerData.HasDecision(Decisions.ShouldEscortToBtr);
+            var hasEscort = McsBotPlayerData.HasDecision(Decisions.ShouldEscort);
+            var btrController = Singleton<GameWorld>.Instance.BtrController;
+            if ((hasEscort && !McsBotPlayerData.TargetPos.HasValue) || (hasEscortToBtr && !btrController.Initiated()))
+            {
+                return true;
+            }
+
+            var sqrDistance = hasEscort ? McsBotPlayerData.TargetPos.Value.McsSqrDistance(BotOwner.Position) : btrController.BtrView.GetBtrSide(1).GoInPoints().Item1.McsSqrDistance(BotOwner.Position);
+            if (sqrDistance < 2f * 2f)
+            {
+                McsBotPlayerData.SetDecision([Decisions.ShouldFollowMe, Decisions.ShouldKeepFormation], Decisions.ShouldHoldPosition);
+                BotOwner.TalkMsg(new McsMsg
+                {
+                    PhraseTrigger = EPhraseTrigger.OnPosition
+                });
+                TasksExtensions.HandleExceptions(DelaySetDecisions(3f, [Decisions.ShouldFollowMe, Decisions.ShouldGoToPoint, Decisions.ShouldEscort, Decisions.ShouldEscortToBtr, Decisions.ShouldKeepFormation]));
+                return true;
+            }
+            else if (BotOwner.GoToSomePointData.IsCome())
+            {
+                return true;
+            }
+            else
+            {
+                var mcsLeadPlayerPos = BotOwner.GetMcsLeadPlayerPos(McsBotPlayerData);
+                if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+                {
+                    CheckStuck();
+                }
+
+                if (Time.time - BotOwner.Mover.LastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
+                {
+                    BotOwner.StopMove();
+                    BotOwner.Mover.AllowTeleport();
+                    BotOwner.GetPlayer.Teleport(McsBotPlayerData.LeadPlayer.Position, true);
+                    var playerPosition = McsBotPlayerData.Player.Position;
+                    BotOwner.Mover.LastGoodCastPoint = BotOwner.Mover.PrevSuccessLinkedFrom_1 = BotOwner.Mover.PrevLinkPos = BotOwner.Mover.PositionOnWayInner = playerPosition;
+                    BotOwner.Mover.LastGoodCastPointTime = Time.time;
+                    BotOwner.Mover.PrevPosLinkedTime_1 = 0f;
+                    BotOwner.Mover.SetPlayerToNavMesh(playerPosition);
+                    BotOwner.Mover.RecalcWay();
+                    BotOwner.Mover.Pause = true;
+                    UpdateLeadNearMoveTarget(mcsLeadPlayerPos, out float nextTime);
+                    if (_currentMoveTarget.HasValue)
+                    {
+                        BotOwner.GoToSomePointData.SetPoint(_currentMoveTarget.Value);
+                    }
+                    return true;
+                }
+
+                if (Time.time - BotOwner.Mover.LastTimePosChanged >= 2f)
+                {
+                    return true;
+                }
+
+                return false;
+            }
+        }
+
+        public virtual bool EndGoToProtect()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            if (BotOwner.GoToSomePointData.IsCome())
+            {
+                return true;
+            }
+            else
+            {
+                var mcsLeadPlayerPos = BotOwner.GetMcsLeadPlayerPos(McsBotPlayerData);
+                if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+                {
+                    CheckStuck();
+                }
+
+                if (Time.time - BotOwner.Mover.LastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
+                {
+                    BotOwner.StopMove();
+                    BotOwner.Mover.AllowTeleport();
+                    BotOwner.GetPlayer.Teleport(McsBotPlayerData.LeadPlayer.Position, true);
+                    var playerPosition = McsBotPlayerData.Player.Position;
+                    BotOwner.Mover.LastGoodCastPoint = BotOwner.Mover.PrevSuccessLinkedFrom_1 = BotOwner.Mover.PrevLinkPos = BotOwner.Mover.PositionOnWayInner = playerPosition;
+                    BotOwner.Mover.LastGoodCastPointTime = Time.time;
+                    BotOwner.Mover.PrevPosLinkedTime_1 = 0f;
+                    BotOwner.Mover.SetPlayerToNavMesh(playerPosition);
+                    BotOwner.Mover.RecalcWay();
+                    BotOwner.Mover.Pause = true;
+                    BotOwner.TalkMsg(new McsMsg
+                    {
+                        PhraseTrigger = EPhraseTrigger.Regroup
+                    });
+                    UpdateLeadNearMoveTarget(mcsLeadPlayerPos, out float nextTime);
+                    if (_currentMoveTarget.HasValue)
+                    {
+                        BotOwner.GoToSomePointData.SetPoint(_currentMoveTarget.Value);
+                    }
+                    return true;
+                }
+
+                if (Time.time - BotOwner.Mover.LastTimePosChanged > 6f)
+                {
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        public virtual bool EndAttackMoving()
+        {
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+            var haveBullets = BotOwner.WeaponManager?.HaveBullets;
+            if (!haveBullets.Value)
+            {
+                return true;
+            }
+
+            if (Time.time - BotOwner.ShootData.LastTriggerPressd > 9f)
+            {
+                return true;
+            }
+            if (BotOwner.DogFight.DogFightState > BotDogFightStatus.none)
+            {
+                return true;
+            }
+            if (BotOwner.Memory.IsInCover)
+            {
+                return true;
+            }
+            if (BotOwner.GoToSomePointData.IsCome())
+            {
+                return true;
+            }
+            return false;
+        }
+
+        protected bool CheckStuck()
+        {
+            var pos = BotOwner.Position;
+            if (BotOwner.Mover.LastPos.McsSqrDistance(pos) > 2f * 2f)
+            {
+                BotOwner.Mover.LastPos = pos;
+                BotOwner.Mover.LastTimePosChanged = Time.time;
+                return false;
+            }
+            else
+            {
+                TrySolveStuck();
+            }
+            return true;
+        }
+
+        public virtual void TrySolveStuck()
+        {
+            if (_nextVaultCheckTime < Time.time)
+            {
+                _nextVaultCheckTime = Time.time + VAULT_CHECK_INTERVAL;
+                if (ShouldTryVault())
+                {
+                    if (!TryVault())
+                    {
+
+                    }
+                }
+            }
+        }
+
+        public virtual bool EndHoldPosition()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            UpdateCoverToShoot();
+            var mcsLeadPlayerPos = BotOwner.GetMcsLeadPlayerPos(McsBotPlayerData);
+            if (BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos) > TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
+            {
+                return true;
+            }
+
+            if (_haveCoverToShoot && ProtectWantKill() && ProtectCareKill())
+            {
+                return true;
+            }
+
+            var goalEnemy = BotOwner.Memory.GoalEnemy;
+            if (!BotOwner.Memory.IsInCover)
+            {
+                return true;
+            }
+            if (goalEnemy == null)
+            {
+                if (CanSearchEnemy())
+                {
+                    return true;
+                }
+            }
+            else
+            {
+                if (goalEnemy.IsVisible && goalEnemy.CanShoot)
+                {
+                    return true;
+                }
+                if (goalEnemy.IsVisible && goalEnemy.Distance < 100f)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public virtual bool CanSearchEnemy()
+        {
+            var goalEnemy = BotOwner.Memory.GoalEnemy;
+            return goalEnemy == null || !WasHitRecently(10f) && !goalEnemy.IsVisible && !goalEnemy.CanShoot && goalEnemy.CanISearch && BotOwner.Tactic.IsCurTactic(BotsGroup.BotCurrentTactic.Attack) && BotOwner.Memory.LastEnemyVisionOld(LocalBotSettingsProviderClass.Core.COVER_SECONDS_AFTER_LOSE_VISION);
+        }
+
+        public virtual bool ProtectCareKill()
+        {
+            // return (Time.time - GetEnemyLastSeenTime()) < 10f;
+            return true;
+        }
+
+        public virtual bool ProtectWantKill()
+        {
+            // return (Time.time - BotOwner.BotsGroup.EnemyLastSeenTimeReal) < BotOwner.Settings.FileSettings.Mind.ATTACK_ENEMY_IF_PROTECT_DELTA_LAST_TIME_SEEN;
+            return true;
+        }
+
+        public virtual float GetEnemyLastSeenTime()
+        {
+            if (BotOwner.Settings.FileSettings.Mind.PROTECT_TIME_REAL)
+            {
+                return BotOwner.BotsGroup.EnemyLastSeenTimeReal;
+            }
+            return BotOwner.BotsGroup.EnemyLastSeenTimeSence;
+        }
+
+        public virtual CustomNavigationPoint FollowerCheckData()
+        {
+            Vector3 leadPos;
+            if (McsBotPlayerData?.LeadPlayer != null && McsBotPlayerData.LeadPlayer.HealthController.IsAlive)
+            {
+                leadPos = McsBotPlayerData.LeadPlayer.Position;
+            }
+            else if (BotOwner.BotFollower.HaveBoss)
+            {
+                leadPos = BotOwner.BotFollower.BossToFollow.Position;
+            }
+            else
+            {
+                leadPos = BotOwner.Position;
+            }
+            var shootPointClass = BotOwner.CurrentEnemyTargetPosition(true);
+            var coverShootType = CoverShootType.shoot;
+            if (shootPointClass == null)
+            {
+                coverShootType = CoverShootType.hide;
+            }
+            var coverSearchData = new CoverSearchData(leadPos, BotOwner.CoverSearchInfo, coverShootType, LocalBotSettingsProviderClass.Core.START_DIST_TO_COV, 0f, CoverSearchType.closerToSelectedPoint, shootPointClass, null, new Vector3?(leadPos), ECheckSHootHide.shootAndHide, new CoverSearchDefenceDataClass(0f), PointsArrayType.byShootType, true);
+            return BotOwner.BotsGroup.CoverPointMaster.GetCoverPointMain(coverSearchData, true);
+        }
+
+        public virtual bool ShouldEndPatrol()
+        {
+            if (BotOwner.PeaceLook.HaveActions())
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public virtual bool IsDogFighting()
+        {
+            return BotOwner.DogFight.DogFightState > BotDogFightStatus.none;
+        }
+
+        public virtual bool EndGoToLootTarget()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+
+            if (Time.time > _nextLootingCheckTime && !McsBotPlayerData.IsTaskRunning && !McsBotPlayerData.IsLooting)
+            {
+                _currentLootingRetries += 1;
+                _nextLootingCheckTime = Time.time + LOOTING_FINNISHED_COLDDOWN;
+                return true;
+            }
+
+            if (_currentLootingRetries >= 15)
+            {
+                _currentLootingRetries = 0;
+                McsBotPlayerData.IsLooting = false;
+                return true;
+            }
+
+            if (BotOwner.GoToSomePointData.IsCome())
+            {
+                return true;
+            }
+            return false;
+        }
+
+        public virtual bool ShouldShootImmediately()
+        {
+            try
+            {
+                var goalEnemy = BotOwner.Memory.GoalEnemy;
+                var flag = ((goalEnemy != null && goalEnemy.Distance < BotOwner.Settings.FileSettings.Shoot.SHOOT_IMMEDIATELY_DIST) || BotOwner.BotsGroup.AnyBodyShootImmediately) && goalEnemy.CanShoot && Time.time - goalEnemy.AddTime < 5f;
+                var isActive = BotOwner.WeaponManager.UnderbarrelLauncherController.IsActive;
+                BotOwner.BotsGroup.AnyBodyShootImmediately = flag || isActive;
+                return BotOwner.BotsGroup.AnyBodyShootImmediately;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public virtual bool IsShootFromCoverConditionAllFine()
+        {
+            if (!BotOwner.Memory.IsInCover)
+            {
+                return false;
+            }
+            if (!BotOwner.LookSensor.EnoughDistToShoot(out var flag))
+            {
+                return false;
+            }
+            if (!BotOwner.Memory.CurCustomCoverPoint.CanShootToTargetCast(BotOwner, BotOwner.Settings.FileSettings.Cover.DELTA_SEEN_FROM_COVE_LAST_POS))
+            {
+                return false;
+            }
+            if (BotOwner.WeaponManager.Stationary.ShallEndShootFromCurrent())
+            {
+                return false;
+            }
+            return true;
+        }
+
+        public virtual bool GetCrossPoint(EnemyInfo enemy)
+        {
+            var nearestDoor = BotOwner.NearDoorData.GetNearestDoor();
+            if (nearestDoor == null)
+            {
+                return false;
+            }
+            var position = BotOwner.Transform.position;
+            var currPosition = enemy.CurrPosition;
+            var gclass = new GClass365(position, currPosition);
+            var vector = nearestDoor.SegmentOpen.b - nearestDoor.SegmentOpen.a;
+            var vector2 = nearestDoor.SegmentOpen.a - vector * 0.1f;
+            var vector3 = nearestDoor.SegmentOpen.b + vector * 0.1f;
+            return GClass369.GetCrossPoint(gclass.a, gclass.b, vector2, vector3) != null;
+        }
+
+        public virtual bool CannotSeeEnemy(EnemyInfo info)
+        {
+            if (info == null)
+            {
+                return false;
+            }
+            var vector = info.EnemyLastPositionReal + Vector3.up * 1.6f;
+            return !Physics.Linecast(BotOwner.WeaponRoot.position, vector, out var raycastHit, LayerMaskClass.HighPolyWithTerrainMask);
+        }
+
+        public virtual bool CanShootNow()
+        {
+            var goalEnemy = BotOwner.Memory.GoalEnemy;
+            return goalEnemy != null && goalEnemy.CanShoot && goalEnemy.IsVisible;
+        }
+
+        public virtual bool ShootNow()
+        {
+            return BotOwner.Memory.GoalEnemy.CanShoot && BotOwner.Memory.GoalEnemy.IsVisible;
+        }
+
+        public virtual bool EndShootFromPlace()
+        {
+            if (!BotOwner.Memory.HaveEnemy)
+            {
+                return true;
+            }
+            if (BotOwner.DogFight.ShallStartCauseHavePlace())
+            {
+                return true;
+            }
+            if (!ShootNow())
+            {
+                return true;
+            }
+            if (WasHitRecently(5f))
+            {
+                return true;
+            }
+            if (_nextShootTime < Time.time)
+            {
+                _nextShootTime = Time.time + 3f;
+                if (BotOwner.BotLay.CanShootPos(BotOwner.Memory.GoalEnemy, true, false))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public virtual bool EndShootFromCover()
+        {
+            if (!BotOwner.Memory.IsInCover)
+            {
+                return true;
+            }
+
+            if (!BotOwner.LookSensor.EnoughDistToShoot(out var enough))
+            {
+                return true;
+            }
+            if (!BotOwner.Memory.CurCustomCoverPoint.CanShootToTargetCast(BotOwner, BotOwner.Settings.FileSettings.Cover.DELTA_SEEN_FROM_COVE_LAST_POS))
+            {
+                return true;
+            }
+            if (BotOwner.WeaponManager.Stationary.ShallEndShootFromCurrent())
+            {
+                return true;
+            }
+            return false;
+        }
+
+        public virtual bool EndGoToEnemy()
+        {
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+            if (BotOwner.DogFight.ShallStartCauseHavePlace())
+            {
+                return true;
+            }
+            if (IsEnemyPosLost())
+            {
+                return true;
+            }
+            var goalEnemy = BotOwner.Memory.GoalEnemy;
+            if (!(BotOwner.DogFight.DogFightState > BotDogFightStatus.none) && goalEnemy != null && (!goalEnemy.IsVisible || !goalEnemy.CanShoot))
+            {
+                return false;
+            }
+            return true;
+        }
+
+        public virtual bool IsEnemyPosLost()
+        {
+            if (Time.time - BotOwner.Memory.LastEnemyTimeSeen > 10f)
+            {
+                BotOwner.Memory.GoalEnemy = null;
+                return true;
+            }
+            return false;
+        }
+
+        public virtual bool EndShootToSmoke()
+        {
+            if (!BotOwner.SmokeGrenade.ShallShoot())
+            {
+                return true;
+            }
+            return false;
+        }
+
+        public virtual bool EndRunToEnemy()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            if (McsBotPlayerData.HasDecision(Decisions.ShouldFollowMe))
+            {
+                return true;
+            }
+
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+
+            if (BotOwner.DogFight.ShallStartCauseHavePlace())
+            {
+                return true;
+            }
+            if (IsEnemyPosLost())
+            {
+                return true;
+            }
+
+            if (BotOwner.Mover.IsComeTo(BotOwner.Settings.FileSettings.Move.REACH_DIST, false, null))
+            {
+                return true;
+            }
+
+            var goalEnemy = BotOwner.Memory.GoalEnemy;
+            if (goalEnemy != null && (!goalEnemy.IsVisible || !goalEnemy.CanShoot))
+            {
+                return false;
+            }
+            return true;
+        }
+
+        public virtual bool EndShootFromStationary()
+        {
+            if (IsEnemyPosLost())
+            {
+                if (BotOwner.Medecine.FirstAid.Have2Do)
+                {
+                    return true;
+                }
+                if (BotOwner.Medecine.SurgicalKit.HaveWork)
+                {
+                    return true;
+                }
+            }
+            var curLink = BotOwner.WeaponManager.Stationary.CurLink;
+            if (curLink == null)
+            {
+                return true;
+            }
+            if (!curLink.HaveAmmo())
+            {
+                return true;
+            }
+            if (!curLink.IsFree(BotOwner.Id))
+            {
+                return true;
+            }
+            if (BotOwner.Memory.HaveEnemy && !BotOwner.WeaponManager.Stationary.IsEnemyAtSector(BotOwner.WeaponManager.Stationary.CurLink))
+            {
+                return true;
+            }
+            if (!BotOwner.Memory.HaveEnemy)
+            {
+                ScanSector(curLink);
+            }
+            return false;
+        }
+
+        public virtual bool EndGoToExfiltrationPoint()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+
+            if (Time.time - BotOwner.Mover.LastTimePosChanged > 30f)
+            {
+                BotOwner.StopMove();
+                BotOwner.Mover.AllowTeleport();
+                BotOwner.GetPlayer.Teleport(BotOwner.PatrollingData.ExfiltrationData.CachedExfiltrationPoint.Position, true);
+                var playerPosition = McsBotPlayerData.Player.Position;
+                BotOwner.Mover.LastGoodCastPoint = BotOwner.Mover.PrevSuccessLinkedFrom_1 = BotOwner.Mover.PrevLinkPos = BotOwner.Mover.PositionOnWayInner = playerPosition;
+                BotOwner.Mover.LastGoodCastPointTime = Time.time;
+                BotOwner.Mover.PrevPosLinkedTime_1 = 0f;
+                BotOwner.Mover.SetPlayerToNavMesh(playerPosition);
+                BotOwner.Mover.RecalcWay();
+                BotOwner.Mover.Pause = true;
+                UpdateCommonMoveTarget(BotOwner.PatrollingData.ExfiltrationData.CachedExfiltrationPoint.Position, out float nextTime);
+                if (_currentMoveTarget.HasValue)
+                {
+                    BotOwner.GoToSomePointData.SetPoint(_currentMoveTarget.Value);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        public virtual bool IsWannaLeave()
+        {
+            if (BotOwner.Boss.IamBoss || BotOwner.BotFollower == null || BotOwner.BotFollower.BossToFollow == null)
+            {
+                return BotOwner.Exfiltration.WannaLeave();
+            }
+            IPlayer player = BotOwner.BotFollower.BossToFollow.Player();
+            if (player != null && player.AIData != null && !(player.AIData.BotOwner == null) && player.AIData.BotOwner.Exfiltration != null)
+            {
+                return player.AIData.BotOwner.Exfiltration.WannaLeave();
+            }
+            return BotOwner.Exfiltration.WannaLeave();
+        }
+
+        public virtual bool EndMeleeAttack()
+        {
+            var weaponManager = BotOwner.WeaponManager;
+            if (weaponManager == null)
+            {
+                return true;
+            }
+
+            var meleeData = weaponManager.Melee;
+            if (meleeData == null)
+            {
+                return true;
+            }
+
+            var goalEnemy = BotOwner.Memory.GoalEnemy;
+
+            if (goalEnemy == null)
+            {
+                return true;
+            }
+
+            if (meleeData.ShallEndRun)
+            {
+                return true;
+            }
+
+            if (weaponManager.HaveBullets)
+            {
+                return true;
+            }
+
+            if ((Time.time - goalEnemy.PersonalLastSeenTime) > 5f)
+            {
+                return true;
+            }
+
+            if (IsEnemyPosLost())
+            {
+                return true;
+            }
+
+            if (weaponManager.Reload?.Reloading == true)
+            {
+                return true;
+            }
+
+            if (!weaponManager.IsMelee)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public virtual EquipmentSlot CheckWeaponSwitch(bool forceRefresh = false)
+        {
+            var weaponManager = BotOwner.WeaponManager;
+            if (weaponManager == null || weaponManager.Selector == null)
+            {
+                return EquipmentSlot.FirstPrimaryWeapon;
+            }
+
+            var currentSlot = weaponManager.Selector.EquipmentSlot;
+            if (_nextWeaponSwitchTime > Time.time)
+            {
+                return currentSlot;
+            }
+
+            weaponManager.Selector.UpdateWeaponsList();
+            var targetSlot = BotOwner.DetermineWeaponSlotByAmmo(currentSlot, out var total);
+            if (targetSlot != currentSlot)
+            {
+                BotOwner.TryChangeWeaponSlot(targetSlot);
+                _nextWeaponSwitchTime = Time.time + WEAPON_SWITCH_COOLDOWN;
+            }
+            else if (forceRefresh)
+            {
+                BotOwner.TryChangeWeaponSlot(currentSlot);
+                _nextWeaponSwitchTime = Time.time + WEAPON_SWITCH_COOLDOWN;
+            }
+
+            return targetSlot;
+        }
+
+        public virtual bool ShouldUseMeleeAttack()
+        {
+            if (_nextMeleeCheckTime > Time.time)
+            {
+                return false;
+            }
+
+            var weaponManager = BotOwner.WeaponManager;
+            if (weaponManager == null)
+            {
+                return false;
+            }
+
+            var targetSlot = CheckWeaponSwitch();
+#if DEBUG
+            // AstarVanguardPlugin.Logger.LogWarning($"目标武器类型: {targetSlot}");
+#endif
+            _nextMeleeCheckTime = Time.time + MELEE_CHECK_INTERVAL;
+
+            if (targetSlot == EquipmentSlot.Scabbard && weaponManager.IsMelee)
+            {
+                return true;
+            }
+
+            if (targetSlot == EquipmentSlot.Scabbard && !weaponManager.Selector.CanChangeToMeleeWeapons)
+            {
+                return false;
+            }
+
+            if (targetSlot == EquipmentSlot.Scabbard && !weaponManager.HaveBullets)
+            {
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 参考SAIN
+        /// </summary>
+        /// <returns></returns>
+        public virtual bool ShouldTryVault()
+        {
+            if (BotOwner.GetPlayer == null || BotOwner.GetPlayer.VaultingComponent == null || BotOwner.GetPlayer.VaultingGameplayRestrictions == null)
+            {
+                return false;
+            }
+
+            if (!BotOwner.GetPlayer.VaultingGameplayRestrictions.CanVaulting())
+            {
+                return false;
+            }
+
+            if (!BotOwner.Mover.IsMoving)
+            {
+                return false;
+            }
+
+            var lookDirection = BotOwner.GetPlayer.LookDirection.normalized;
+            var targetDirection = BotOwner.Mover.NormDirCurPoint;
+            if (Vector3.Dot(lookDirection, targetDirection) < DIRECTION_ALIGNMENT_THRESHOLD)
+            {
+                return false;
+            }
+
+            if (Time.time - BotOwner.Mover.LastTimePosChanged < 3f)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public virtual bool TryVault()
+        {
+            if (CheckForVaultableObstacle())
+            {
+                if (BotOwner.GetPlayer.VaultingComponent.TryVaulting())
+                {
+                    BotOwner.GetPlayer.OnVaulting();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public virtual bool CheckForVaultableObstacle()
+        {
+            var startPosition = BotOwner.GetPlayer.WeaponRoot.position;
+            var lookDirection = BotOwner.GetPlayer.LookDirection.normalized;
+            var endPosition = startPosition + lookDirection * SPHERECAST_DISTANCE;
+
+            startPosition.y += 0.33f;
+            endPosition.y += 0.33f;
+
+            if (Physics.SphereCast(startPosition, SPHERECAST_RADIUS, lookDirection, out RaycastHit hit, SPHERECAST_DISTANCE, LayerMaskClass.PlayerStaticCollisionsMask))
+            {
+                if (hit.collider != null)
+                {
+                    var obstacleHeight = hit.collider.bounds.size.y;
+                    var maxVaultHeight = BotOwner.GetPlayer.VaultingParameters.VaultingHeight;
+
+                    return obstacleHeight < maxVaultHeight && obstacleHeight < VAULT_HEIGHT_THRESHOLD;
+                }
+            }
+
+            return false;
+        }
+
+        public virtual void UpdateLeadNearMoveTarget(Vector3? leadPos, out float nextUpdateTime)
+        {
+            if (!leadPos.HasValue)
+            {
+                nextUpdateTime = 1f;
+                return;
+            }
+
+            if (TryUpdateFormationMoveTarget(leadPos.Value, out nextUpdateTime))
+            {
+                return;
+            }
+
+            var sqrDistanceToLead = BotOwner.Position.McsSqrDistance(leadPos.Value);
+            if (sqrDistanceToLead <= TOO_CLOSE_FROM_LEAD_DISTANCE * TOO_CLOSE_FROM_LEAD_DISTANCE)
+            {
+                var awayDir = BotOwner.Position - leadPos.Value;
+                awayDir.y = 0f;
+                if (awayDir.sqrMagnitude < 0.0001f)
+                {
+                    awayDir = BotOwner.Transform.forward;
+                    awayDir.y = 0f;
+                }
+                awayDir.Normalize();
+
+                var retreatTarget = leadPos.Value + awayDir * (TOO_CLOSE_FROM_LEAD_DISTANCE + 1f);
+                if (Tools.BetterDestination(3f, retreatTarget, out var betterDestination))
+                {
+                    retreatTarget = betterDestination;
+                }
+
+                _lastTargetPos = leadPos;
+                _currentMoveTarget = retreatTarget;
+                nextUpdateTime = 0.2f;
+                return;
+            }
+
+            if (_lastTargetPos.Value.McsSqrDistance(leadPos.Value) < LEAD_POSITION_CHANGE_THRESHOLD * LEAD_POSITION_CHANGE_THRESHOLD)
+            {
+                nextUpdateTime = 1f;
+                return;
+            }
+
+            var nearPos = Tools.GetPosNearTarget(leadPos.Value, BotOwner);
+            if (!nearPos.HasValue)
+            {
+                nextUpdateTime = 0.25f;
+                return;
+            }
+
+            var groundPos = TryProjectToGround(nearPos.Value);
+
+            if (!CanGetPathToRun(BotOwner.Position, groundPos, McsBotPlayerData, out Vector3[] corners))
+            {
+                nextUpdateTime = 0.25f;
+                return;
+            }
+
+            var newMoveTarget = GetPointAlongPathAtDistance(corners, 15f);
+            _currentMoveTarget = newMoveTarget;
+            nextUpdateTime = 1f;
+        }
+
+        public virtual bool TryUpdateFormationMoveTarget(Vector3 leadPos, out float nextUpdateTime)
+        {
+            nextUpdateTime = 1f;
+
+            var mcsBotPlayerConfig = McsBotPlayerData?.McsAILeadPlayer?.McsBotPlayerConfig;
+            if (mcsBotPlayerConfig == null)
+            {
+                return false;
+            }
+
+            if (!mcsBotPlayerConfig.EnableKeepFormation)
+            {
+                return false;
+            }
+
+            var leadPlayer = McsBotPlayerData?.LeadPlayer;
+            if (leadPlayer == null)
+            {
+                return false;
+            }
+
+            var botIndex = Tools.GetMcsBotPlayerIndex(BotOwner.ProfileId, mcsBotPlayerConfig.FormationSequentialFill);
+            if (botIndex < 5)
+            {
+                return false;
+            }
+
+            var predictedPos = leadPos + leadPlayer.Velocity * 2;
+            if (NavMesh.SamplePosition(predictedPos, out var hit, 3f, -1))
+            {
+                predictedPos = hit.position;
+            }
+            else
+            {
+                predictedPos = leadPos;
+            }
+
+            var target = Tools.ComputeTarget(leadPlayer, predictedPos, botIndex, Tools.ParseFormationMatrix(mcsBotPlayerConfig.FormationMatrix), mcsBotPlayerConfig.FormationSpacing);
+            if (!target.HasValue)
+            {
+                return false;
+            }
+
+            var groundPos = TryProjectToGround(target.Value);
+
+            if (!CanGetPathToRun(BotOwner.Position, groundPos, McsBotPlayerData, out Vector3[] corners))
+            {
+                nextUpdateTime = 0.25f;
+                return true;
+            }
+
+            var newMoveTarget = GetPointAlongPathAtDistance(corners, 15f);
+            _currentMoveTarget = newMoveTarget;
+            nextUpdateTime = 0.2f;
+            return true;
+        }
+
+        public virtual void UpdateEscortMoveTarget(Vector3? escortPos, out float nextUpdateTime)
+        {
+            if (McsBotPlayerData == null)
+            {
+                nextUpdateTime = 1f;
+                return;
+            }
+
+            if (!escortPos.HasValue)
+            {
+                nextUpdateTime = 0.25f;
+                return;
+            }
+
+            if (_lastTargetPos != escortPos)
+            {
+                _lastTargetPos = escortPos;
+                _lastCalcCorners = null;
+                _lastCanRunResult = false;
+                _currentMoveRetries = 0;
+                _currentMoveTarget = escortPos;
+            }
+
+            var leadPos = BotOwner.GetMcsLeadPlayerPos(McsBotPlayerData);
+            if (leadPos == null)
+            {
+                nextUpdateTime = 1f;
+                return;
+            }
+
+            var leadVelocity = McsBotPlayerData.LeadPlayer.Velocity;
+            var predictedPos = leadPos + leadVelocity * 2;
+
+            if (NavMesh.SamplePosition(predictedPos, out var hit, 1f, -1))
+            {
+                predictedPos = hit.position;
+            }
+            else
+            {
+                predictedPos = leadPos;
+            }
+
+            var groundPos = TryProjectToGround(predictedPos);
+
+            if (!CanGetPathToRun(groundPos, escortPos.Value, McsBotPlayerData, out Vector3[] corners))
+            {
+                nextUpdateTime = 0.25f;
+                return;
+            }
+
+            var newMoveTarget = GetPointAlongPathAtDistance(corners, 15f);
+            _currentMoveTarget = newMoveTarget;
+            nextUpdateTime = 0.2f;
+        }
+
+        public virtual void UpdateCommonMoveTarget(Vector3? targetPos, out float nextUpdateTime)
+        {
+            if (McsBotPlayerData == null)
+            {
+                nextUpdateTime = 1f;
+                return;
+            }
+
+            if (!targetPos.HasValue)
+            {
+                nextUpdateTime = 0.25f;
+                return;
+            }
+
+            if (_lastTargetPos != targetPos)
+            {
+                _lastTargetPos = targetPos;
+                _lastCalcCorners = null;
+                _lastCanRunResult = false;
+                _currentMoveRetries = 0;
+                _currentMoveTarget = targetPos;
+            }
+
+            var selfVelocity = BotOwner.Velocity;
+            var predictedPos = BotOwner.Position + selfVelocity * 2;
+
+            if (NavMesh.SamplePosition(predictedPos, out var hit, 1f, -1))
+            {
+                predictedPos = hit.position;
+            }
+            else
+            {
+                predictedPos = BotOwner.Position;
+            }
+
+            var startGroundPos = TryProjectToGround(predictedPos);
+            var targetGroundPos = TryProjectToGround(targetPos.Value);
+
+            if (!CanGetPathToRun(startGroundPos, targetGroundPos, McsBotPlayerData, out Vector3[] corners))
+            {
+                nextUpdateTime = 0.25f;
+                return;
+            }
+
+            var newMoveTarget = GetPointAlongPathAtDistance(corners, 30f);
+            _currentMoveTarget = newMoveTarget;
+            nextUpdateTime = 1f;
+        }
+
+        public virtual bool CanGetPathToRun(Vector3 startPos, Vector3 targetPos, McsBotPlayerData mcsBotPlayerData, out Vector3[] corners)
+        {
+            var navMeshPath = new NavMeshPath();
+            NavMesh.CalculatePath(startPos, targetPos, -1, navMeshPath);
+            var flag = false;
+
+            var sqrDistanceToTarget = startPos.McsSqrDistance(targetPos);
+            var sampleRadius = sqrDistanceToTarget > 50f * 50f ? 5f : 1.5f;
+
+            if (navMeshPath.status is NavMeshPathStatus.PathComplete or NavMeshPathStatus.PathPartial)
+            {
+                flag = true;
+                if ((targetPos - navMeshPath.corners[navMeshPath.corners.Length - 1]).magnitude > Math.Max(2f, sampleRadius))
+                {
+                    flag = false;
+                }
+            }
+
+            if (!flag && Tools.BetterDestination(sampleRadius, targetPos, out var betterDest))
+            {
+                navMeshPath = new NavMeshPath();
+                NavMesh.CalculatePath(startPos, betterDest, -1, navMeshPath);
+                if (navMeshPath.status is NavMeshPathStatus.PathComplete or NavMeshPathStatus.PathPartial)
+                {
+                    flag = true;
+                }
+            }
+
+            if (!flag)
+            {
+                _currentMoveRetries += 1;
+                if (_currentMoveRetries >= 5 || !_lastCanRunResult)
+                {
+                    _currentMoveRetries = 0;
+                    corners = null;
+                    _lastCanRunResult = false;
+                    mcsBotPlayerData.SetDecision([Decisions.ShouldFollowMe, Decisions.ShouldKeepFormation]);
+                    mcsBotPlayerData.TargetPos = null;
+                    mcsBotPlayerData.ProxyTargetId = null;
+                    return _lastCanRunResult;
+                }
+
+                corners = _lastCalcCorners;
+                return _lastCanRunResult;
+            }
+
+            _currentMoveRetries = 0;
+            _lastCalcCorners = navMeshPath.corners;
+            corners = _lastCalcCorners;
+            _lastCanRunResult = true;
+            return _lastCanRunResult;
+        }
+
+        public virtual Vector3 GetPointAlongPathAtDistance(Vector3[] corners, float distance)
+        {
+            var accumulated = 0f;
+            for (int i = 0; i < corners.Length - 1; i++)
+            {
+                var segLen = Vector3.Distance(corners[i], corners[i + 1]);
+                if (accumulated + segLen >= distance)
+                {
+                    var t = (distance - accumulated) / segLen;
+                    return Vector3.Lerp(corners[i], corners[i + 1], t);
+                }
+                accumulated += segLen;
+            }
+            return corners[corners.Length - 1];
+        }
+
+        public virtual Vector3 TryProjectToGround(Vector3 pos)
+        {
+            if (Physics.Raycast(pos + Vector3.up * 2f, Vector3.down, out var rayHit, 50f, LayerMaskClass.HighPolyWithTerrainMask))
+            {
+                if (NavMesh.SamplePosition(rayHit.point, out var navHit1, 1f, -1))
+                {
+                    return navHit1.position;
+                }
+                return rayHit.point;
+            }
+
+            if (NavMesh.SamplePosition(pos, out var navHit2, 10f, -1))
+            {
+                return navHit2.position;
+            }
+
+            return pos;
+        }
+
+        public virtual bool EndDeactivateMine()
+        {
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+
+            if (!BotOwner.BewarePlantedMine.CanDeactivate())
+            {
+                return true;
+            }
+
+            if (Time.time > _nextDeactivateCheckTime)
+            {
+                _currentDeactivateRetries += 1;
+                _nextDeactivateCheckTime = Time.time + 1f;
+            }
+
+            if (_currentDeactivateRetries >= 15)
+            {
+                _currentDeactivateRetries = 0;
+                return true;
+            }
+            return false;
+        }
+
+        public virtual bool EndRunAwayGrenade()
+        {
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+
+            if (!BotOwner.BewareGrenade.ShallRunAway())
+            {
+                return true;
+            }
+
+            if (BotOwner.Memory.IsInCover)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public virtual bool EndRunAwayArtillery()
+        {
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+
+            if (!BotOwner.ArtilleryDangerPlace.ShallRunAway())
+            {
+                return true;
+            }
+
+            if (BotOwner.Memory.IsInCover)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public virtual bool EndRunAwayBTR()
+        {
+            if (BotOwner.Mover.LastTimePosChanged + 1f < Time.time)
+            {
+                CheckStuck();
+            }
+
+            if (!BotOwner.BewareBTR.ShallRunAway())
+            {
+                return true;
+            }
+
+            if (BotOwner.Memory.IsInCover)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public virtual bool EndFlashed()
+        {
+            if (!BotOwner.FlashGrenade.IsFlashed)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public virtual bool EndGoToExcuteProxyAction()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            if (!McsBotPlayerData.HasDecision([Decisions.ShouldInteractionProxyAction, Decisions.ShouldLootProxyAction, Decisions.ShouldQuestProxyAction]))
+            {
+                return true;
+            }
+            return false;
+        }
+
+        public virtual bool EndDropTargetLootLogic()
+        {
+            if (McsBotPlayerData == null)
+            {
+                return true;
+            }
+
+            var haveItemsToDrop = BotOwner.ExternalItemsController.HaveItemsToDrop();
+            if (!haveItemsToDrop)
+            {
+                McsBotPlayerData.RemoveDecision([Decisions.ShouldDropTargetLoot]);
+                _nextLootingCheckTime = Time.time + ENTER_COMMON_LOOTING_COLDDOWN * 2;
+                return true;
+            }
+
+            var mcsLeadPlayerPos = BotOwner.GetMcsLeadPlayerPos(McsBotPlayerData);
+            var sqrDistance = BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos);
+            if (sqrDistance > 9f)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public void RefreshStuckTimer()
+        {
+            BotOwner.Mover.LastTimePosChanged = Time.time;
+        }
+
+        public virtual bool CheckFirearmsAnimatorState()
+        {
+            BotOwner.WeaponManager.CheckWeaponReady();
+            var time = Time.time;
+            if (time < _nextAnimatorFixTime)
+            {
+                _nextAnimatorFixTime = time + 1;
+                return true;
+            }
+
+            var player = BotOwner.GetPlayer;
+            var firearmController = player?.HandsController as Player.FirearmController;
+            if (firearmController == null)
+            {
+                _nextAnimatorFixTime = time + 1;
+                BotOwner.WeaponManager.Selector.TryChangeToMain();
+                return false;
+            }
+
+            if (firearmController?.FirearmsAnimator == null)
+            {
+                _nextAnimatorFixTime = time + 1;
+                BotOwner.WeaponManager.Selector.TryChangeToMain();
+                return false;
+            }
+
+            var handsIdle = !player.HandsController.IsAiming
+                        && !player.HandsController.IsInventoryOpen()
+                        && !player.HandsController.IsInInteractionStrictCheck()
+                        && !player.HandsController.IsHandsProcessing();
+
+            if (!BotOwner.WeaponManager.Selector.IsWeaponReady && !handsIdle)
+            {
+                _nextAnimatorFixTime = time + 1;
+                BotOwner.WeaponManager.Selector.TryChangeToMain();
+                return false;
+            }
+
+            _nextAnimatorFixTime = time + 1;
+            return true;
+        }
+
+        public virtual bool TryGetBtrFollowAction(float time, out Action action)
+        {
+            action = null;
+
+            var btrController = Singleton<GameWorld>.Instance.BtrController;
+            if (btrController == null || btrController.BtrVehicle == null || btrController.BtrView == null)
+            {
+                return false;
+            }
+
+            var leadPlayer = McsBotPlayerData.LeadPlayer;
+            if (leadPlayer == null)
+            {
+                return false;
+            }
+
+            var btrVehicle = btrController.BtrVehicle;
+            var selfPlayer = BotOwner.GetPlayer;
+            var selfIsPassenger = btrVehicle.IsPassenger(selfPlayer, out var selfPassenger);
+            var bossInBtr = leadPlayer.BtrState == EPlayerBtrState.Inside || leadPlayer.BtrState == EPlayerBtrState.GoIn;
+            var bossOutBtr = leadPlayer.BtrState == EPlayerBtrState.Outside || leadPlayer.BtrState == EPlayerBtrState.GoOut;
+
+            if (bossInBtr && !selfIsPassenger)
+            {
+                if (!TryFindFreeSeat(btrController, out byte sideId, out byte slotId, out Vector3 doorPos))
+                {
+                    return false;
+                }
+
+                McsBotPlayerData.BtrTargetSide = sideId;
+                McsBotPlayerData.BtrTargetSlot = slotId;
+                McsBotPlayerData.IsBtrLeaving = false;
+
+                if (_nextUpdatePosTime < time)
+                {
+                    UpdateCommonMoveTarget(doorPos, out float nextTime);
+                    _nextUpdatePosTime = time + nextTime;
+                }
+
+                if (_currentMoveTarget.HasValue)
+                {
+                    BotOwner.GoToSomePointData.SetPoint(_currentMoveTarget.Value);
+                }
+
+                action = new Action(typeof(GoToBtrLogic), "Mcs:GoToBtr");
+                return true;
+            }
+
+            if (selfIsPassenger && !bossOutBtr)
+            {
+                McsBotPlayerData.IsBtrLeaving = false;
+                action = new Action(typeof(HoldPositionLogic), "Mcs:BtrStay");
+                return true;
+            }
+
+            if (selfIsPassenger && bossOutBtr)
+            {
+                McsBotPlayerData.IsBtrLeaving = true;
+                McsBotPlayerData.BtrTargetSide = selfPassenger.SideId;
+                McsBotPlayerData.BtrTargetSlot = selfPassenger.SlotId;
+                action = new Action(typeof(GoToBtrLogic), "Mcs:LeaveBtr");
+                return true;
+            }
+            return false;
+        }
+
+        public virtual bool TryFindFreeSeat(BTRControllerClass btrController, out byte sideId, out byte slotId, out Vector3 doorPos)
+        {
+            sideId = 0;
+            slotId = 0;
+            doorPos = Vector3.zero;
+
+            for (byte s = 0; s <= 1; s++)
+            {
+                var side = btrController.BtrView.GetBtrSide(s);
+                if (side == null)
+                {
+                    continue;
+                }
+
+                var info = side.SideInfo();
+                for (byte slot = 0; slot < info.Length; slot++)
+                {
+                    if (info[slot])
+                    {
+                        sideId = s;
+                        slotId = slot;
+                        doorPos = side.GoInPoints().Item1;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        public virtual bool IsTargetPitchReachable(StationaryWeapon stationaryWeapon, Vector3 targetPos)
+        {
+            var origin = stationaryWeapon.OperatorPosition;
+            var delta = targetPos - origin;
+
+            var horizontal = new Vector3(delta.x, 0f, delta.z).magnitude;
+            if (horizontal < 0.01f)
+            {
+                return false;
+            }
+
+            var requiredPitch = Mathf.Atan2(-delta.y, horizontal) * Mathf.Rad2Deg;
+            var pitchLimit = stationaryWeapon.PitchLimit;
+            var min = Mathf.Min(pitchLimit.x, pitchLimit.y);
+            var max = Mathf.Max(pitchLimit.x, pitchLimit.y);
+
+            return requiredPitch >= min - 2f && requiredPitch <= max + 2f;
+        }
+
+        public virtual void ScanSector(StationaryWeaponLink link)
+        {
+            var weapon = link.Weapon;
+            if (weapon == null)
+            {
+                return;
+            }
+
+            var halfAngleDeg = Mathf.Acos(Mathf.Clamp(link.CosAngleBase, -1f, 1f)) * Mathf.Rad2Deg;
+
+            _scanPhase += Time.deltaTime / SCANPERIOD;
+            var tri = Mathf.PingPong(_scanPhase, 1f);
+            var yawDeg = Mathf.Lerp(-halfAngleDeg, halfAngleDeg, tri);
+
+            var baseDir = link.InitialDir;
+            baseDir.y = 0f;
+            if (baseDir.sqrMagnitude < 0.001f)
+            {
+                return;
+            }
+            baseDir.Normalize();
+
+            var dir = Quaternion.AngleAxis(yawDeg, Vector3.up) * baseDir;
+            dir = Quaternion.AngleAxis(SCANPITCHDOWN, Vector3.Cross(dir, Vector3.up)) * dir;
+            var scanPoint = weapon.OperatorPosition + dir * SCANDISTANCE;
+            BotOwner.AimingManager.CurrentAiming.SetTarget(scanPoint);
+            BotOwner.AimingManager.NodeUpdate();
+        }
+    }
+}

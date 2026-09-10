@@ -1,0 +1,29 @@
+
+using DrakiaXYZ.BigBrain.Brains;
+using EFT;
+using UnityEngine;
+
+namespace Astar.Vanguard.Client.Bots.Brain.Logics
+{
+    public class HoldPositionLogic : McsBotBaseLogic
+    {
+        private HoldPositionOverrideLogic _baseLogic;
+
+        public HoldPositionLogic(BotOwner botOwner) : base(botOwner)
+        {
+            _baseLogic = new(botOwner);
+        }
+
+        public override void Start()
+        {
+            BotOwner.Mover.LastPos = BotOwner.Position;
+            base.Start();
+        }
+
+        public override void Update(CustomLayer.ActionData data)
+        {
+            BotOwner.Mover.LastTimePosChanged = Time.time;
+            _baseLogic.UpdateNodeByMain(data);
+        }
+    }
+}

@@ -1,0 +1,145 @@
+
+using System.Collections.Generic;
+using EFT;
+using Astar.Vanguard.Client.Extensions;
+using Astar.Vanguard.Client.Mgrs;
+using Astar.Vanguard.Client.Models;
+using Astar.Vanguard.Client.Utils;
+using UnityEngine;
+
+namespace Astar.Vanguard.Client.Misc
+{
+    public class McsAILeadPlayer : AIBossPlayer
+    {
+        public McsBotPlayerConfig McsBotPlayerConfig
+        {
+            get
+            {
+                if (McsMgr.McsLeadPlayerConfigs.TryGetValue(McsLeadPlayer.ProfileId, out var mcsBotPlayerConfig))
+                {
+                    return mcsBotPlayerConfig;
+                }
+                else
+                {
+                    mcsBotPlayerConfig = new McsBotPlayerConfig
+                    {
+                        McsLeadPlayerId = McsLeadPlayer.ProfileId,
+                        EnableLooting = AstarVanguardPlugin.EnableLooting.Value,
+                        PriceThreshold = AstarVanguardPlugin.PriceThreshold.Value,
+                        KeywordItemText = AstarVanguardPlugin.KeywordItemText.Value,
+                        LootingKeywordItem = AstarVanguardPlugin.LootingKeywordItem.Value,
+                        BlockItemType = (int)AstarVanguardPlugin.BlockItemType.Value,
+                        EnableKeepFormation = AstarVanguardPlugin.EnableKeepFormation.Value,
+                        FormationMatrix = AstarVanguardPlugin.FormationMatrix.Value,
+                        FormationSpacing = AstarVanguardPlugin.FormationSpacing.Value,
+                        FormationSequentialFill = AstarVanguardPlugin.FormationSequentialFill.Value,
+                    };
+                    McsMgr.UpdateMcsBotPlayerConfig(mcsBotPlayerConfig.McsLeadPlayerId, mcsBotPlayerConfig);
+                    return mcsBotPlayerConfig;
+                }
+            }
+        }
+        public Player McsLeadPlayer;
+        public GamePlayerOwner GamePlayerOwner => McsLeadPlayer.GetGamePlayerOwner();
+        public McsAILeadPlayer(Player player) : base(player)
+        {
+            McsLeadPlayer = player;
+        }
+
+        public Vector3 ClearAreaCacheCenter;
+        public float ClearAreaCacheTime;
+        public List<Player> ClearAreaCacheMembers;
+        public List<List<Vector3>> ClearAreaCacheSegments;
+
+        private static McsMgr McsMgr => MgrAccessor.Get<McsMgr>();
+
+        public void CleanupDeadEnemies()
+        {
+            var mcsBotPlayers = McsMgr.GetAllMcsSquadMembersByMcsLeadId(McsLeadPlayer.ProfileId);
+            foreach (var mcsBotPlayer in mcsBotPlayers)
+            {
+                var botOwner = mcsBotPlayer?.BotOwner;
+                if (botOwner == null || botOwner.EnemiesController == null)
+                {
+                    continue;
+                }
+
+                var deadEnemies = new List<IPlayer>();
+                foreach (var kvp in botOwner.EnemiesController.EnemyInfos)
+                {
+                    if (kvp.Key == null || kvp.Value?.Person == null || kvp.Value.Person.HealthController == null || !kvp.Value.Person.HealthController.IsAlive)
+                    {
+                        deadEnemies.Add(kvp.Key);
+                    }
+                }
+
+                foreach (var deadEnemy in deadEnemies)
+                {
+                    if (botOwner.Memory.GoalEnemy?.Person == deadEnemy)
+                    {
+                        botOwner.Memory.GoalEnemy = null;
+                    }
+
+                    if (botOwner.EnemiesController.EnemyInfos.ContainsKey(deadEnemy))
+                    {
+                        botOwner.EnemiesController.Remove(deadEnemy);
+                    }
+                }
+            }
+        }
+
+        public void CalcGoalEnemy(Player seenEnemy)
+        {
+            CleanupDeadEnemies();
+
+            if (seenEnemy == null || seenEnemy.AIData?.BotOwner == null)
+            {
+                return;
+            }
+            if (!seenEnemy.HealthController.IsAlive)
+            {
+                return;
+            }
+
+            var mcsBotPlayers = McsMgr.GetAllMcsSquadMembersByMcsLeadId(McsLeadPlayer.ProfileId);
+            var seenBotOwner = seenEnemy.AIData.BotOwner;
+
+            foreach (var mcsBotPlayer in mcsBotPlayers)
+            {
+                var botOwner = mcsBotPlayer.BotOwner;
+
+                McsLeadPlayer.BotsGroup.AddEnemy(seenBotOwner, EBotEnemyCause.callForHelp2);
+
+                if (botOwner.EnemiesController.EnemyInfos.TryGetValue(seenEnemy, out var enemyInfo))
+                {
+                    enemyInfo.IsVisible = true;
+                    botOwner.Memory.GoalEnemy = enemyInfo;
+                    enemyInfo.PriorityIndex = 0;
+                }
+            }
+        }
+
+        public EnemyInfo GetClosestEnemy(List<EnemyInfo> enemiesInfos)
+        {
+            if (enemiesInfos.Count == 0)
+            {
+                return null;
+            }
+
+            EnemyInfo closestEnemy = null;
+
+            var minDistance = Mathf.Infinity;
+            foreach (var enemyInfo in enemiesInfos)
+            {
+                var distance = Position.McsSqrDistance(enemyInfo.CurrPosition);
+                if (distance < minDistance)
+                {
+                    closestEnemy = enemyInfo;
+                    minDistance = distance;
+                }
+            }
+
+            return closestEnemy;
+        }
+    }
+}

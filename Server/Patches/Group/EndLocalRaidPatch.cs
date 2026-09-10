@@ -1,0 +1,35 @@
+
+using System.Reflection;
+using HarmonyLib;
+using Microsoft.Extensions.DependencyInjection;
+using Astar.Vanguard.Server.Controllers;
+using SPTarkov.Reflection.Patching;
+using SPTarkov.Server.Core.Controllers;
+using SPTarkov.Server.Core.DI;
+using SPTarkov.Server.Core.Extensions;
+using SPTarkov.Server.Core.Models.Common;
+using SPTarkov.Server.Core.Models.Eft.Match;
+
+namespace Astar.Vanguard.Server.Patches.Group
+{
+    /// <summary>
+    /// 战局结束时如果类型不是转移，则清空该玩家的小队成员
+    /// </summary>
+    public sealed class EndLocalRaidPatch : AbstractPatch
+    {
+        protected override MethodBase GetTargetMethod() => AccessTools.Method(typeof(MatchController), nameof(MatchController.EndLocalRaid));
+
+        private static RaidController RaidController { get => field ??= ServiceLocator.ServiceProvider.GetService<RaidController>(); }
+
+        [PatchPrefix]
+        public static void Prefix(MongoId sessionId, EndLocalRaidRequestData request)
+        {
+            var isTransfer = request.Results.IsMapToMapTransfer();
+            if (isTransfer)
+            {
+                return;
+            }
+            RaidController.ClearGroupMember(sessionId);
+        }
+    }
+}

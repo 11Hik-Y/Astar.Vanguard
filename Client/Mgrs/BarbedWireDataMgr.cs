@@ -1,0 +1,46 @@
+
+
+using CommonAssets.Scripts.Game.LabyrinthEvent;
+using Astar.Vanguard.Client.Extensions;
+using Astar.Vanguard.Client.Utils;
+
+namespace Astar.Vanguard.Client.Mgrs
+{
+    public class BarbedWireDataMgr : LabyrinthDataMgr
+    {
+        public override void OnRaidStarted()
+        {
+            base.OnRaidStarted();
+            if (!Tools.IsHost)
+            {
+                return;
+            }
+            if (!_shouldInit)
+            {
+                return;
+            }
+            LoadData(LoadBarbedWire);
+        }
+
+        private void LoadBarbedWire()
+        {
+            var syncables = LocationScene.GetAllObjects<ISyncAble>();
+            foreach (var syncable in syncables)
+            {
+                if (syncable is not TrapSyncable trap)
+                {
+                    continue;
+                }
+
+                if (trap.TrapType == ETrapType.BarbedWire && trap.gameObject.activeSelf)
+                {
+                    var data = trap.GetData();
+                    if (data != null)
+                    {
+                        _datas.Add(data);
+                    }
+                }
+            }
+        }
+    }
+}

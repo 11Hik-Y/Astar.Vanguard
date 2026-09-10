@@ -1,0 +1,60 @@
+using System.Reflection;
+using EFT;
+using HarmonyLib;
+using Astar.Vanguard.Client.Extensions;
+using Astar.Vanguard.Client.Mgrs;
+using Astar.Vanguard.Client.Misc;
+using Astar.Vanguard.Client.Utils;
+using SPT.Reflection.Patching;
+using Systems.Effects;
+
+namespace Astar.Vanguard.Client.Patches.Bots
+{
+    /// <summary>
+    /// 借鉴friendlyPmc
+    /// </summary>
+    public sealed class PlayHitEffectPatch : ModulePatch
+    {
+        protected override MethodBase GetTargetMethod() => AccessTools.Method(typeof(EffectsCommutator), nameof(EffectsCommutator.PlayHitEffect));
+
+        private static McsMgr McsMgr => MgrAccessor.Get<McsMgr>();
+
+        [PatchPostfix]
+        public static void Postfix(EffectsCommutator __instance, EftBulletClass info, ShotInfoClass playerHitInfo)
+        {
+            if (!Tools.IsHost)
+            {
+                return;
+            }
+            
+            var shooter = info.Player;
+            if (shooter == null)
+            {
+                return;
+            }
+
+            if (shooter.iPlayer.Profile.Info.GroupId is "Fika" or "Mcs" || McsMgr.IsMcsLeadPlayer(shooter.iPlayer.ProfileId) || McsMgr.IsMcsBotPlayer(shooter.iPlayer.ProfileId))
+            {
+                return;
+            }
+
+            if (!__instance.IsHitPointAlreadyProcessed(info.HitPoint))
+            {
+                foreach (var mcsBotPlayer in McsMgr.GetAllAliveMcsBotPlayer())
+                {
+                    var botOwner = mcsBotPlayer.AIData.BotOwner;
+                    if (mcsBotPlayer.Position.McsSqrDistance(info.HitPoint) <= botOwner.Settings.FileSettings.Mind.BULLET_FEEL_CLOSE_SDIST * botOwner.Settings.FileSettings.Mind.BULLET_FEEL_CLOSE_SDIST)
+                    {
+                        mcsBotPlayer.BotsGroup.AddEnemy(shooter.iPlayer, EBotEnemyCause.callForHelp1);
+                        var mcsLeadPlayer = McsMgr.GetMcsLeadPlayerByMcsBotPlayerId(mcsBotPlayer.ProfileId);
+                        var mcsAILeadPlayer = McsMgr.GetMcsAILeadPlayerByMcsLeadPlayerId(mcsLeadPlayer.ProfileId);
+                        if (shooter.iPlayer is Player shooterPlayer)
+                        {
+                            mcsAILeadPlayer.CalcGoalEnemy(shooterPlayer);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

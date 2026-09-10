@@ -1,0 +1,369 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "tasks": {
+        "version": "2.0.0",
+        "options": {
+            "env": {
+                "DOTNET_NOLOGO": "yes",
+                "DOTNET_CLI_TELEMETRY_OPTOUT": "yes"
+            }
+        },
+        "tasks": [
+            {
+                "label": "copy: ref dlls from game",
+                "type": "shell",
+                "command": "powershell",
+                "args": [
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    "${workspaceFolder}/scripts/copy_ref_dlls.ps1",
+                    "-WorkspaceFolder",
+                    "${workspaceFolder}"
+                ]
+            },
+            {
+                "label": "client: restore",
+                "type": "shell",
+                "command": "dotnet restore Client/AstarVanguardClient.sln --nologo",
+            },
+            {
+                "label": "fika: restore",
+                "type": "shell",
+                "command": "dotnet restore Fika/AstarVanguardFika.sln --nologo",
+            },
+            {
+                "label": "server: restore",
+                "type": "shell",
+                "command": "dotnet restore Server/AstarVanguardServer.sln --nologo",
+            },
+            {
+                "label": "all: package",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "plugin: package",
+                    "fika: package"
+                ],
+                "group": "build"
+            },
+            {
+                "label": "plugin: package",
+                "type": "shell",
+                "command": "powershell",
+                "args": [
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    "$ver = Get-Content '${workspaceFolder}\\version.txt' | Select-Object -First 1; Compress-Archive -Path '${workspaceFolder}\\Build\\Plugin\\*' -DestinationPath \"${workspaceFolder}\\AstarVanguard-$ver.zip\" -Force"
+                ],
+            },
+            {
+                "label": "fika: package",
+                "type": "shell",
+                "command": "powershell",
+                "args": [
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    "$ver = Get-Content '${workspaceFolder}\\version.txt' | Select-Object -First 1; Compress-Archive -Path '${workspaceFolder}\\Build\\Fika\\*' -DestinationPath \"${workspaceFolder}\\AstarVanguardFika-$ver.zip\" -Force"
+                ],
+            },
+            {
+                "label": "client: build",
+                "type": "shell",
+                "command": "dotnet build Client/AstarVanguardClient.sln --nologo --no-restore --configuration Release",
+                "dependsOrder": "sequence",
+                "dependsOn": "client: restore",
+                "group": {
+                    "kind": "build"
+                }
+            },
+            {
+                "label": "client: debug build",
+                "type": "shell",
+                "command": "dotnet build Client/AstarVanguardClient.sln --nologo --no-restore --configuration Debug",
+                "dependsOrder": "sequence",
+                "dependsOn": "client: restore",
+                "group": {
+                    "kind": "build"
+                }
+            },
+            {
+                "label": "fika: build",
+                "type": "shell",
+                "command": "dotnet build Fika/AstarVanguardFika.sln --nologo --no-restore --configuration Release",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "client: restore",
+                    "fika: restore"
+                ],
+                "group": {
+                    "kind": "build"
+                }
+            },
+            {
+                "label": "fika: debug build",
+                "type": "shell",
+                "command": "dotnet build Fika/AstarVanguardFika.sln --nologo --no-restore --configuration Debug",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "client: restore",
+                    "fika: restore"
+                ],
+                "group": {
+                    "kind": "build"
+                }
+            },
+            {
+                "label": "server: build",
+                "type": "shell",
+                "command": "dotnet build Server/AstarVanguardServer.sln --nologo --no-restore --configuration Release",
+                "dependsOrder": "sequence",
+                "dependsOn": "server: restore",
+                "group": {
+                    "kind": "build"
+                }
+            },
+            {
+                "label": "server: debug build",
+                "type": "shell",
+                "command": "dotnet build Server/AstarVanguardServer.sln --nologo --no-restore --configuration Debug",
+                "dependsOrder": "sequence",
+                "dependsOn": "server: restore",
+                "group": {
+                    "kind": "build"
+                }
+            },
+            {
+                "label": "build: clean",
+                "type": "shell",
+                "command": "powershell",
+                "args": [
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    "if (Test-Path '${workspaceFolder}\\Build') { Remove-Item '${workspaceFolder}\\Build\\*' -Recurse -Force }"
+                ]
+            },
+            {
+                "label": "all: build",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "build: clean",
+                    "server: build",
+                    "fika: build"
+                ],
+                "group": "build"
+            },
+            {
+                "label": "all: debug build",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "build: clean",
+                    "server: debug build",
+                    "fika: debug build"
+                ],
+                "group": "build"
+            },
+            {
+                "label": "client: move",
+                "type": "shell",
+                "command": "xcopy",
+                "args": [
+                    "/E",
+                    "/I",
+                    "/Y",
+                    "'${workspaceFolder}\\Build\\BepInEx\\'",
+                    "'D:\\OtherGames\\SPT4.0.X\\Client-4.0.X\\BepInEx\\'"
+                ]
+            },
+            {
+                "label": "client: debug se move",
+                "type": "shell",
+                "command": "cmd",
+                "args": [
+                    "/c",
+                    "move",
+                    "/Y",
+                    "'D:\\OtherGames\\SPT4.0.X\\Client-4.0.X\\BepInEx\\scripts\\Astar.AstarVanguardClient.dll'",
+                    "'D:\\OtherGames\\SPT4.0.X\\Client-4.0.X\\BepInEx\\plugins\\AstarVanguardClient\\'"
+                ],
+                "group": {
+                    "kind": "build"
+                }
+            },
+            {
+                "label": "fika: debug se move",
+                "type": "shell",
+                "command": "cmd",
+                "args": [
+                    "/c",
+                    "move",
+                    "/Y",
+                    "'D:\\OtherGames\\SPT4.0.X\\Client-4.0.X\\BepInEx\\scripts\\Astar.AstarVanguardFika.dll'",
+                    "'D:\\OtherGames\\SPT4.0.X\\Client-4.0.X\\BepInEx\\plugins\\AstarVanguardClient\\'"
+                ],
+                "group": {
+                    "kind": "build"
+                }
+            },
+            {
+                "label": "client headless: move",
+                "type": "shell",
+                "command": "xcopy",
+                "args": [
+                    "/E",
+                    "/I",
+                    "/Y",
+                    "'${workspaceFolder}\\Build\\BepInEx\\'",
+                    "'D:\\OtherGames\\SPT4.0.X\\Client-4.0.X-Headless\\BepInEx\\'"
+                ]
+            },
+            {
+                "label": "client headless: debug se move",
+                "type": "shell",
+                "command": "cmd",
+                "args": [
+                    "/c",
+                    "move",
+                    "/Y",
+                    "'D:\\OtherGames\\SPT4.0.X\\Client-4.0.X-Headless\\BepInEx\\scripts\\Astar.AstarVanguardClient.dll'",
+                    "'D:\\OtherGames\\SPT4.0.X\\Client-4.0.X-Headless\\BepInEx\\plugins\\AstarVanguardClient\\'"
+                ],
+                "group": {
+                    "kind": "build"
+                }
+            },
+            {
+                "label": "fika headless: debug se move",
+                "type": "shell",
+                "command": "cmd",
+                "args": [
+                    "/c",
+                    "move",
+                    "/Y",
+                    "'D:\\OtherGames\\SPT4.0.X\\Client-4.0.X-Headless\\BepInEx\\scripts\\Astar.AstarVanguardFika.dll'",
+                    "'D:\\OtherGames\\SPT4.0.X\\Client-4.0.X-Headless\\BepInEx\\plugins\\AstarVanguardClient\\'"
+                ],
+                "group": {
+                    "kind": "build"
+                }
+            },
+            {
+                "label": "all: debug se move",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "client: debug se move",
+                    "fika: debug se move"
+                ],
+                "group": "build"
+            },
+            {
+                "label": "all headless: debug se move",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "client headless: debug se move",
+                    "fika headless: debug se move"
+                ],
+                "group": "build"
+            },
+            {
+                "label": "server: move",
+                "type": "shell",
+                "command": "xcopy",
+                "args": [
+                    "/E",
+                    "/I",
+                    "/Y",
+                    "'${workspaceFolder}\\Build\\SPT\\user\\'",
+                    "'D:\\OtherGames\\SPT4.0.X\\Server-4.0.X\\SPT\\user'"
+                ]
+            },
+            {
+                "label": "all: move",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "server: move",
+                    "client: move",
+                    "client headless: move"
+                ],
+                "group": "build"
+            },
+            {
+                "label": "client fika: move",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "client: move",
+                    "client headless: move"
+                ],
+                "group": "build"
+            },
+            {
+                "label": "all: (build & package)",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "all: build",
+                    "all: package"
+                ],
+                "group": "build"
+            },
+            {
+                "label": "upload to virustotal",
+                "type": "shell",
+                "command": "powershell",
+                "args": [
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    "${workspaceFolder}/Scripts/upload_to_vt.ps1",
+                    "-WorkspaceFolder",
+                    "${workspaceFolder}"
+                ],
+                "group": "build"
+            },
+            {
+                "label": "create draft release",
+                "type": "shell",
+                "command": "powershell",
+                "args": [
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    "${workspaceFolder}/scripts/create_draft_release.ps1",
+                    "-WorkspaceFolder",
+                    "${workspaceFolder}"
+                ],
+                "group": "build"
+            },
+            {
+                "label": "all: virustotal & draft",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "upload to virustotal",
+                    "create draft release"
+                ],
+                "group": "build"
+            }
+        ]
+    },
+    "settings": {
+        "window.title": "Astar.AstarVanguard-4.0.X",
+        "dotnet.preferCSharpExtension": true,
+        "dotnet.defaultSolution": "Astar.Vanguard.slnx"
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-dotnettools.csharp"
+        ]
+    }
+}

@@ -1,0 +1,43 @@
+
+using System.Threading.Tasks;
+using Astar.Vanguard.Server.Controllers;
+using Astar.Vanguard.Server.Models.Eft.Common.Tables;
+using SPTarkov.DI.Annotations;
+using SPTarkov.Server.Core.Models.Common;
+using SPTarkov.Server.Core.Models.Eft.Common;
+using SPTarkov.Server.Core.Utils;
+
+namespace Astar.Vanguard.Server.Callbacks
+{
+    [Injectable]
+    public class ProfileCallbacks(
+        HttpResponseUtil httpResponseUtil,
+        ProfileController profileController
+    )
+    {
+        /// <summary>
+        /// 处理 /mcs/client/game/profile/list
+        /// </summary>
+        public virtual async ValueTask<string> GetMcsBotPlayerProfileForInventoryMode(string url, EmptyRequestData info, MongoId mcsLeadPlayerId)
+        {
+            return httpResponseUtil.NoBody(profileController.GetMcsBotPlayerProfileForInventoryMode(mcsLeadPlayerId));
+        }
+
+        /// <summary>
+        /// 处理 /mcs/client/game/aid/verify
+        /// </summary>
+        public virtual async ValueTask<string> VerifyMcsBotPlayerAid(string url, McsBotPlayerAidRequestData info, MongoId mcsLeadPlayerId)
+        {
+            return httpResponseUtil.NoBody(await profileController.VerifyMcsBotPlayerAid(mcsLeadPlayerId, info.Aid));
+        }
+
+        /// <summary>
+        /// 处理 /mcs/client/game/aid/remove
+        /// </summary>
+        public virtual async ValueTask<string> RemoveMcsBotPlayerAid(string url, McsBotPlayerAidRequestData info, MongoId mcsLeadPlayerId)
+        {
+            await profileController.SaveAllMcsBotPlayerProfile(mcsLeadPlayerId);
+            return httpResponseUtil.NoBody(await profileController.RemoveMcsBotPlayerAid(mcsLeadPlayerId, info.Aid));
+        }
+    }
+}

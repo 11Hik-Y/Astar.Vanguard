@@ -1,0 +1,454 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Astar.Vanguard.Server.Generators.OrderQuestGeneration;
+using Astar.Vanguard.Server.Models.Eft.Common.Tables;
+using Astar.Vanguard.Server.Models.Enums;
+using Astar.Vanguard.Server.Patches.OrderQuest;
+using Astar.Vanguard.Server.Utils;
+using SPTarkov.DI.Annotations;
+using SPTarkov.Server.Core.Helpers;
+using SPTarkov.Server.Core.Models.Common;
+using SPTarkov.Server.Core.Models.Eft.Common;
+using SPTarkov.Server.Core.Models.Eft.Common.Tables;
+using SPTarkov.Server.Core.Models.Enums;
+using SPTarkov.Server.Core.Models.Spt.Config;
+using SPTarkov.Server.Core.Services;
+using SPTarkov.Server.Core.Utils;
+using SPTarkov.Server.Core.Utils.Cloners;
+using SPTarkov.Server.Core.Utils.Logger;
+
+namespace Astar.Vanguard.Server.Services
+{
+    [Injectable(InjectionType.Singleton)]
+    public class QuestService(
+        ConfigService configService,
+        SptLogger<QuestService> logger,
+        QuestGenerator questGenerator,
+        ProfileFixerService profileFixerService,
+        TimeUtil timeUtil,
+        InfoService infoService,
+        ICloner cloner,
+        ServerLocalisationService serverLocalisationService,
+        TraderService traderService,
+        MailSendService mailSendService,
+        ItemHelper itemHelper,
+        FileUtil fileUtil,
+        JsonUtil jsonUtil,
+        ProfileService profileService,
+        ProfileHelper profileHelper
+    )
+    {
+        private readonly string _traderFolderDir = System.IO.Path.Join(configService.GetModPath(), "Assets", "database", "templates");
+        private RepeatableQuest _orderTemplate;
+        public async Task OnPostLoadAsync()
+        {
+            await LoadOrderTemplate();
+        }
+
+        private async Task LoadOrderTemplate()
+        {
+            var orderQuestsPath = System.IO.Path.Combine(_traderFolderDir, "orderQuests.json");
+            if (!fileUtil.FileExists(orderQuestsPath))
+            {
+                await fileUtil.WriteFileAsync(orderQuestsPath, jsonUtil.Serialize(new RepeatableQuest
+                {
+                    Id = "67d03016c971a7faef94af07",
+                    TraderId = "6864e812f9fe664cb8b8e152",
+                    Location = "any",
+                    Image = "/files/quest/icon/62bd61b1b818ff064405b827.jpg",
+                    Type = QuestTypeEnum.Completion,
+                    IsKey = false,
+                    Restartable = false,
+                    InstantComplete = false,
+                    SecretQuest = false,
+                    CanShowNotificationsInGame = true,
+                    Rewards = new()
+                    {
+                        { "Success", [] },
+                        { "Started", [] },
+                        { "Fail", [] },
+                    },
+                    Conditions = new()
+                    {
+                        AvailableForStart = [],
+                        AvailableForFinish = [new(){
+                            Id = "64cfb3818db9f48b3f0b0a6f",
+                            ParentId = "",
+                            DynamicLocale = true,
+                            Index = 0,
+                            VisibilityConditions = [],
+                            GlobalQuestCounterId = "",
+                            Target = new([ItemTpl.MONEY_ROUBLES], null),
+                            Value = 10000,
+                            MinDurability = 0,
+                            MaxDurability = 100,
+                            DogtagLevel = 0,
+                            OnlyFoundInRaid = false,
+                            IsEncoded = false,
+                            CountInRaid = true,
+                            ConditionType = "HandoverItem"
+                        }],
+                        Fail = []
+                    },
+                    Side = "Pmc",
+                    Name = "{templateId} name {traderId}",
+                    Note = "{templateId} note {traderId}",
+                    Description = "{templateId} description {traderId} 0",
+                    SuccessMessageText = "{templateId} successMessageText {traderId} 0",
+                    FailMessageText = "{templateId} failMessageText {traderId} 0",
+                    StartedMessageText = "{templateId} startedMessageText {traderId} 0",
+                    ChangeQuestMessageText = "{templateId} changeQuestMessageText {traderId} 0",
+                    AcceptPlayerMessage = "{templateId} acceptPlayerMessage {traderId} 0",
+                    DeclinePlayerMessage = "{templateId} declinePlayerMessage {traderId} 0",
+                    CompletePlayerMessage = "{templateId} completePlayerMessage {traderId} 0",
+                    Status = 0,
+                    AcceptanceAndFinishingSource = "eft",
+                    ProgressSource = "eft",
+                    RankingModes = [],
+                    GameModes = [],
+                    ArenaLocations = [],
+                    ChangeCost = [new(){
+                        TemplateId = ItemTpl.MONEY_ROUBLES,
+                        Count = 12000
+                    }],
+                    ChangeStandingCost = 0,
+                    QuestStatus = new()
+                    {
+                        Id = "000000000000000000000000",
+                        Uid = "playerId",
+                        QId = "000000000000000000000000",
+                        StartTime = 0,
+                        Status = 0,
+                        StatusTimers = { }
+                    }
+                }, true));
+            }
+            _orderTemplate = await jsonUtil.DeserializeFromFileAsync<RepeatableQuest>(orderQuestsPath);
+        }
+
+        public RepeatableQuest GetOrderTemplate()
+        {
+            return _orderTemplate;
+        }
+
+        public void CreateOrderQuest(MongoId mcsLeadPlayerId, int players, SpawnType spawnType, int carryServiceLevel, int duration)
+        {
+            var fullProfile = profileHelper.GetFullProfile(mcsLeadPlayerId);
+            var pmcData = fullProfile.CharacterData.PmcData;
+            var punishmentMulti = traderService.GetGlobalPunishmentMulti();
+            var orderQuest = questGenerator.GenerateOrderQuest(pmcData, players, carryServiceLevel, duration, GenerateOrderTemplate(
+                RepeatableQuestType.Completion, TraderService.VanguardTraderId, mcsLeadPlayerId,
+                new QuestDescription
+                {
+                    Players = players,
+                    SpawnType = spawnType,
+                    CarryServiceLevel = carryServiceLevel,
+                    Duration = duration
+                }
+            ), punishmentMulti);
+            if (GetClientRepeatableQuestsPatch.QuestsQueueDict.TryGetValue(mcsLeadPlayerId, out var questsQueue))
+            {
+                questsQueue.Enqueue(orderQuest);
+            }
+            else
+            {
+                GetClientRepeatableQuestsPatch.QuestsQueueDict.Add(mcsLeadPlayerId, new([orderQuest]));
+            }
+            infoService.CreateOrderInfo(mcsLeadPlayerId, players, spawnType, carryServiceLevel, duration, orderQuest.Id);
+        }
+
+        public void CreateTicketQuest(MongoId mcsLeadPlayerId, int percent)
+        {
+            var ticketQuest = questGenerator.GenerateTicketQuest(percent, GenerateOrderTemplate(RepeatableQuestType.Completion, TraderService.VanguardTraderId, mcsLeadPlayerId, new QuestDescription
+            {
+                Fines = percent
+            }));
+            if (GetClientRepeatableQuestsPatch.QuestsQueueDict.TryGetValue(mcsLeadPlayerId, out var questsQueue))
+            {
+                questsQueue.Enqueue(ticketQuest);
+            }
+            else
+            {
+                GetClientRepeatableQuestsPatch.QuestsQueueDict.Add(mcsLeadPlayerId, new([ticketQuest]));
+            }
+            infoService.CreateTicketInfo(mcsLeadPlayerId, percent, ticketQuest.Id);
+        }
+
+        public void ProcessExpiredQuests(PmcDataRepeatableQuest generatedRepeatables, PmcData bossPmcData)
+        {
+            var questsToKeep = new List<RepeatableQuest>();
+            var infos = new List<BaseInfo>();
+            var orderInfos = infoService.GetOrderInfos(bossPmcData.Id.Value);
+            var ticketInfos = infoService.GetTicketInfos(bossPmcData.Id.Value);
+            infos.AddRange(orderInfos);
+            infos.AddRange(ticketInfos);
+            foreach (var activeQuest in generatedRepeatables.ActiveQuests)
+            {
+                var currentTime = timeUtil.GetTimeStamp();
+                if (currentTime < activeQuest.ChangeCost.FirstOrDefault(x => x.TemplateId == ItemTpl.MONEY_ROUBLES).Count - 1)
+                {
+                    questsToKeep.Add(activeQuest);
+                    continue;
+                }
+
+                var questStatusInProfile = bossPmcData.Quests.FirstOrDefault(quest => quest.QId == activeQuest.Id);
+                if (questStatusInProfile is null)
+                {
+                    continue;
+                }
+
+                if (questStatusInProfile.Status == QuestStatusEnum.AvailableForFinish)
+                {
+                    questsToKeep.Add(activeQuest);
+                    continue;
+                }
+
+                var info = infos.FirstOrDefault(info => info.QuestId == questStatusInProfile.QId);
+                if (info is null)
+                {
+                    continue;
+                }
+
+                if (info.Status == EInfoStatus.AvailableForStart)
+                {
+                    Refund(bossPmcData.Id.Value, activeQuest, bossPmcData);
+                }
+
+                profileFixerService.RemoveDanglingConditionCounters(bossPmcData);
+                bossPmcData.Quests = bossPmcData.Quests.Where(quest => quest.QId != activeQuest.Id).ToList();
+                generatedRepeatables.InactiveQuests.Add(activeQuest);
+            }
+
+            generatedRepeatables.ActiveQuests = questsToKeep;
+        }
+
+        public RepeatableQuest GenerateOrderTemplate(RepeatableQuestType type, MongoId traderId, MongoId sessionId, QuestDescription questDescription)
+        {
+            var questData = GetClonedQuestTemplateForType(type, TraderService.TempOrderTraderId);
+            if (questData is null)
+            {
+                logger.Error(serverLocalisationService.GetText("repeatable-quest_helper_template_not_found", type));
+                return null;
+            }
+
+            var templateName = Enum.GetName(type);
+            if (templateName is null)
+            {
+                logger.Error(serverLocalisationService.GetText("repeatable-quest_helper_template_name_not_found", type));
+                return null;
+            }
+
+            var typeIds = new Dictionary<string, MongoId>()
+            {
+                {"Completion", "695207e8bcc1dd1e3c80dfcb"}
+            };
+            questData.TemplateId = typeIds.GetValueOrDefault(templateName);
+
+            questData.Name = questData.Name.Replace("{traderId}", traderId).Replace("{templateId}", questData.TemplateId);
+
+            questData.Note = questData.Note?.Replace("{traderId}", traderId).Replace("{templateId}", questData.TemplateId);
+
+            if (questDescription.Fines > 0)
+            {
+                questData.Description = string.Format(serverLocalisationService.GetText(Locales.VANGUARDTRADERTICKETDESCRIPTION), questDescription.Fines);
+            }
+            else
+            {
+                questData.Description = string.Format(serverLocalisationService.GetText(Locales.VANGUARDTRADERORDERDESCRIPTION), questDescription.Players, serverLocalisationService.GetText(questDescription.SpawnType.DisplayName), questDescription.CarryServiceLevel, questDescription.Duration, Math.Round(traderService.GetGlobalPunishmentMulti() * 100d, 2));
+            }
+
+            questData.SuccessMessageText = questData
+                .SuccessMessageText?.Replace("{traderId}", traderId)
+                .Replace("{templateId}", questData.TemplateId);
+
+            questData.FailMessageText = questData
+                .FailMessageText?.Replace("{traderId}", traderId)
+                .Replace("{templateId}", questData.TemplateId);
+
+            questData.StartedMessageText = questData
+                .StartedMessageText?.Replace("{traderId}", traderId)
+                .Replace("{templateId}", questData.TemplateId);
+
+            questData.ChangeQuestMessageText = questData
+                .ChangeQuestMessageText?.Replace("{traderId}", traderId)
+                .Replace("{templateId}", questData.TemplateId);
+
+            questData.AcceptPlayerMessage = questData
+                .AcceptPlayerMessage?.Replace("{traderId}", traderId)
+                .Replace("{templateId}", questData.TemplateId);
+
+            questData.DeclinePlayerMessage = questData
+                .DeclinePlayerMessage?.Replace("{traderId}", traderId)
+                .Replace("{templateId}", questData.TemplateId);
+
+            questData.CompletePlayerMessage = questData
+                .CompletePlayerMessage?.Replace("{traderId}", traderId)
+                .Replace("{templateId}", questData.TemplateId);
+
+            if (questData.QuestStatus is null)
+            {
+                return null;
+            }
+
+            questData.QuestStatus.Id = new();
+            questData.QuestStatus.Uid = sessionId;
+            questData.QuestStatus.QId = questData.Id;
+
+            return questData;
+        }
+        public RepeatableQuest GetClonedQuestTemplateForType(RepeatableQuestType type, MongoId traderId)
+        {
+            var orderTemplate = GetOrderTemplate();
+            var quest = type switch
+            {
+                RepeatableQuestType.Completion => cloner.Clone(orderTemplate),
+                _ => null,
+            };
+
+            if (quest is null)
+            {
+                return null;
+            }
+
+            quest.Id = new();
+            quest.TraderId = traderId;
+
+            return quest;
+        }
+
+        public PmcDataRepeatableQuest GetRepeatableQuestSubTypeFromProfile(RepeatableQuestConfig repeatableConfig, PmcData pmcData)
+        {
+            var repeatableQuestDetails = pmcData.RepeatableQuests.FirstOrDefault(repeatable => repeatable.Name == repeatableConfig.Name);
+
+            if (repeatableQuestDetails is null)
+            {
+                repeatableQuestDetails = new PmcDataRepeatableQuest
+                {
+                    Id = repeatableConfig.Id,
+                    Name = repeatableConfig.Name,
+                    ActiveQuests = [],
+                    InactiveQuests = [],
+                    EndTime = 0,
+                    FreeChanges = 0,
+                    FreeChangesAvailable = 0,
+                    ChangeRequirement = new(),
+                };
+
+                pmcData.RepeatableQuests.Add(repeatableQuestDetails);
+            }
+            return repeatableQuestDetails;
+        }
+
+        public void Refund(MongoId sessionId, RepeatableQuest questToReplace, PmcData pmcData)
+        {
+            double total = 0;
+            List<MongoId> conditionIds = new();
+            List<QuestCondition> questConditions = new();
+
+            if (questToReplace.Conditions.Started != null)
+            {
+                questConditions.AddRange(questToReplace.Conditions.Started);
+            }
+            if (questToReplace.Conditions.AvailableForFinish != null)
+            {
+                questConditions.AddRange(questToReplace.Conditions.AvailableForFinish);
+            }
+            if (questToReplace.Conditions.AvailableForStart != null)
+            {
+                questConditions.AddRange(questToReplace.Conditions.AvailableForStart);
+            }
+            if (questToReplace.Conditions.Success != null)
+            {
+                questConditions.AddRange(questToReplace.Conditions.Success);
+            }
+            if (questToReplace.Conditions.Fail != null)
+            {
+                questConditions.AddRange(questToReplace.Conditions.Fail);
+            }
+
+            foreach (var questCondition in questConditions)
+            {
+                if (questCondition.Target.List.Count == 1 && questCondition.Target.List.First() == ItemTpl.MONEY_ROUBLES)
+                {
+                    conditionIds.Add(questCondition.Id);
+                }
+            }
+
+            foreach (var conditionId in conditionIds)
+            {
+                if (pmcData.TaskConditionCounters.GetValueOrDefault(conditionId) != null)
+                {
+                    total += pmcData.TaskConditionCounters[conditionId].Value.HasValue ? pmcData.TaskConditionCounters[conditionId].Value.Value : 0;
+                }
+            }
+
+            if (total > 0)
+            {
+                var roubles = new Item
+                {
+                    Id = new MongoId(),
+                    Template = ItemTpl.MONEY_ROUBLES,
+                    Upd = new Upd { StackObjectsCount = total },
+                };
+
+                mailSendService.SendLocalisedNpcMessageToPlayer(
+                    sessionId,
+                    TraderService.VanguardTraderId,
+                    MessageType.MessageWithItems,
+                    Locales.VANGUARDTRADERREFUND,
+                    itemHelper.SplitStackIntoSeparateItems(roubles).SelectMany(x => x).ToList(),
+                    timeUtil.GetHoursAsSeconds(168)
+                );
+            }
+        }
+
+        public bool RenewOrder(MongoId mcsLeadPlayerId, string aid)
+        {
+            var profile = profileService.GetMcsBotPlayerProfileByAccountId(mcsLeadPlayerId, aid);
+            if (profile is null)
+            {
+                return false;
+            }
+            var botProfileId = profile.ProfileInfo.ProfileId.Value;
+            var originalOrder = infoService.GetRenewableOrderInfoByBotPlayerProfileId(botProfileId);
+            if (originalOrder is null)
+            {
+                return false;
+            }
+            CreateRenewOrderQuest(mcsLeadPlayerId, originalOrder);
+            return true;
+        }
+
+        private void CreateRenewOrderQuest(MongoId mcsLeadPlayerId, OrderInfo originalOrder)
+        {
+            var fullProfile = profileHelper.GetFullProfile(mcsLeadPlayerId);
+            var pmcData = fullProfile.CharacterData.PmcData;
+            var punishmentMulti = traderService.GetGlobalPunishmentMulti();
+            var players = originalOrder.PlayerIds.Count;
+            var orderQuest = questGenerator.GenerateOrderQuest(pmcData, players,
+                originalOrder.CarryServiceLevel, originalOrder.Duration, GenerateOrderTemplate(
+                RepeatableQuestType.Completion, TraderService.VanguardTraderId, mcsLeadPlayerId,
+                new QuestDescription
+                {
+                    Players = players,
+                    SpawnType = originalOrder.SpawnType,
+                    CarryServiceLevel = originalOrder.CarryServiceLevel,
+                    Duration = originalOrder.Duration
+                }
+            ), punishmentMulti);
+            if (GetClientRepeatableQuestsPatch.QuestsQueueDict.TryGetValue(mcsLeadPlayerId, out var questsQueue))
+            {
+                questsQueue.Enqueue(orderQuest);
+            }
+            else
+            {
+                GetClientRepeatableQuestsPatch.QuestsQueueDict.Add(mcsLeadPlayerId, new([orderQuest]));
+            }
+            infoService.CreateRenewOrderInfo(mcsLeadPlayerId, originalOrder.PlayerIds,
+                originalOrder.SpawnType, originalOrder.CarryServiceLevel, originalOrder.Duration,
+                orderQuest.Id, originalOrder.QuestId);
+        }
+    }
+}

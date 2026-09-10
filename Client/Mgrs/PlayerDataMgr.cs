@@ -1,0 +1,262 @@
+
+
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using EFT;
+using Astar.Vanguard.Client.Datas;
+using Astar.Vanguard.Client.Extensions;
+using Astar.Vanguard.Client.Utils;
+using UnityEngine;
+
+namespace Astar.Vanguard.Client.Mgrs
+{
+    public class PlayerDataMgr : ItemDataMgr
+    {
+        public List<McsBotPlayerData> GetMcsBotPlayerDatas()
+        {
+            var result = new List<McsBotPlayerData>();
+            foreach (var baseData in _datas)
+            {
+                if (baseData is McsBotPlayerData mcsBotPlayerData)
+                {
+                    result.Add(mcsBotPlayerData);
+                }
+            }
+            return result;
+        }
+
+        private BrainMgr BrainMgr => MgrAccessor.Get<BrainMgr>();
+
+        public override void Start()
+        {
+            base.Start();
+        }
+
+        public override void OnRaidStarted()
+        {
+            base.OnRaidStarted();
+            StartCoroutine(ReloadDataLoop(1f, LoadItemData<PlayerData>));
+            StartCoroutine(RecordAgentInfo(1f));
+            StartCoroutine(UpdateItemData(1f));
+            StartCoroutine(RefreshMcsBotPlayersInterestingLoop(10f));
+            StartCoroutine(CheckMcsLeadPlayerSeenEnemiesLoop(1f));
+            var mcsBotPlayerDatas = GetMcsBotPlayerDatas();
+            foreach (var mcsBotPlayerData in mcsBotPlayerDatas)
+            {
+                mcsBotPlayerData.Player.AIData.BotOwner.Memory.GoalTarget.Clear();
+                mcsBotPlayerData.Player.AIData.BotOwner.Memory.GoalEnemy = null;
+            }
+        }
+
+        public IEnumerator RecordAgentInfo(float time)
+        {
+            if (Tools.IsHost)
+            {
+                var waitTime = new WaitForSeconds(time);
+                while (true)
+                {
+                    yield return waitTime;
+                    if (Gameloop.IsVaildGameWorld)
+                    {
+                        try
+                        {
+                            var mcsBotPlayerDatas = GetMcsBotPlayerDatas();
+                            foreach (var mcsBotPlayerData in mcsBotPlayerDatas)
+                            {
+                                var brain = mcsBotPlayerData.BotOwner?.Brain;
+                                if (brain == null)
+                                {
+                                    continue;
+                                }
+
+                                var baseBrain = brain?.BaseBrain;
+                                if (baseBrain == null)
+                                {
+                                    continue;
+                                }
+
+                                AstarVanguardPlugin.LogBuffer.AddUsedBrain(baseBrain.ShortName());
+                                AstarVanguardPlugin.LogBuffer.AddUsedLayer(brain.ActiveLayerName());
+                                AstarVanguardPlugin.LogBuffer.AddUsedReason(brain.GetActiveNodeReason());
+
+                                if (!LayerUtils.IsMcsBotPlayerInjected(mcsBotPlayerData.BotOwner))
+                                {
+                                    BrainMgr.InjectLayers(baseBrain);
+                                }
+                            }
+                        }
+                        catch
+                        {
+
+                        }
+                    }
+                }
+            }
+        }
+
+        private IEnumerator RefreshMcsBotPlayersInterestingLoop(float time)
+        {
+            var waitTime = new WaitForSeconds(time);
+            var publicTime = new WaitForSeconds(.2f);
+            while (true)
+            {
+                yield return waitTime;
+                if (Gameloop.IsVaildGameWorld)
+                {
+                    var mcsBotPlayerDatas = GetMcsBotPlayerDatas();
+                    var closeRootItemDataDict = new Dictionary<McsBotPlayerData, List<ItemData>>();
+                    foreach (var mcsBotPlayerData in mcsBotPlayerDatas)
+                    {
+                        if (mcsBotPlayerData.RootTransform == null)
+                        {
+                            continue;
+                        }
+
+                        if (mcsBotPlayerData.LootingTarget != null)
+                        {
+                            continue;
+                        }
+
+                        closeRootItemDataDict[mcsBotPlayerData] = Tools.GetRangeOwnerItemData(mcsBotPlayerData.RootTransform.position, 30f);
+                    }
+
+                    var totalRootItemCount = 0;
+                    foreach (var list in closeRootItemDataDict.Values)
+                    {
+                        totalRootItemCount += list.Count;
+                    }
+
+                    var totalRootItemDatas = new List<ItemData>();
+                    foreach (var list in closeRootItemDataDict.Values)
+                    {
+                        totalRootItemDatas.AddRange(list);
+                    }
+
+                    var batchSize = Mathf.Clamp(Mathf.CeilToInt(totalRootItemCount / 10f), 100, 2000);
+                    var itemBatches = new List<List<ItemData>>();
+                    var batch = new List<ItemData>();
+
+                    for (int i = 0; i < totalRootItemCount; i += batchSize)
+                    {
+                        batch.Clear();
+                        int endIndex = Math.Min(i + batchSize, totalRootItemCount);
+                        for (int j = i; j < endIndex; j++)
+                        {
+                            batch.Add(totalRootItemDatas[j]);
+                        }
+                        itemBatches.Add(batch);
+                    }
+
+                    var mcsAILeadPlayers = McsMgr.GetAllMcsAILeadPlayer();
+                    foreach (var _batch in itemBatches)
+                    {
+                        foreach (var rootItemData in _batch)
+                        {
+                            foreach (var mcsAILeadPlayer in mcsAILeadPlayers)
+                            {
+                                rootItemData.RefreshInteresting(mcsAILeadPlayer, false);
+                            }
+                        }
+                        yield return publicTime;
+                    }
+
+                    foreach (var keyValuePair in closeRootItemDataDict)
+                    {
+                        var mcsBotPlayerData = keyValuePair.Key;
+                        var closeRootItemDatas = keyValuePair.Value;
+
+                        var closeAllLootData = new List<ItemData>();
+                        foreach (var closeRootItem in closeRootItemDatas)
+                        {
+                            if (closeRootItem.ItemsInContainer != null)
+                            {
+                                closeAllLootData.AddRange(closeRootItem.ItemsInContainer);
+                            }
+                        }
+
+                        mcsBotPlayerData.SetLootingTarget(closeAllLootData);
+                        yield return publicTime;
+                    }
+                }
+            }
+        }
+
+        private IEnumerator CheckMcsLeadPlayerSeenEnemiesLoop(float time)
+        {
+            var waitTime = new WaitForSeconds(time);
+            var publicTime = new WaitForSeconds(.2f);
+            while (true)
+            {
+                yield return waitTime;
+                if (Gameloop.IsVaildGameWorld)
+                {
+                    var mcsAILeadPlayers = McsMgr.GetAllMcsAILeadPlayer();
+                    foreach (var mcsAILeadPlayer in mcsAILeadPlayers)
+                    {
+                        var leadPlayer = mcsAILeadPlayer.Player() as Player;
+                        var leadPlayerPos = leadPlayer.Position + Vector3.up * 1.6f;
+                        var playerDatas = GetDatas<PlayerData>();
+                        foreach (var playerData in playerDatas)
+                        {
+                            var target = playerData.Player;
+
+                            if (target == null || !target.HealthController.IsAlive)
+                            {
+                                continue;
+                            }
+
+                            if (!target.IsAI)
+                            {
+                                continue;
+                            }
+
+                            if (McsMgr.IsMcsBotPlayer(target.ProfileId))
+                            {
+                                continue;
+                            }
+
+                            if (!leadPlayer.BotsGroup.IsEnemy(target))
+                            {
+                                continue;
+                            }
+
+                            var sqrDistance = target.Position.McsSqrDistance(leadPlayer.Position);
+                            if (sqrDistance >= 150f * 150f)
+                            {
+                                continue;
+                            }
+
+                            var dirToTarget = target.Position - leadPlayer.Position;
+                            var angle = Vector3.Angle(leadPlayer.LookDirection, dirToTarget);
+                            if (angle > 45f)
+                            {
+                                continue;
+                            }
+
+                            var blocked = Physics.Linecast(
+                                leadPlayerPos,
+                                target.Position + Vector3.up * 1.6f,
+                                out var raycastHit,
+                                LayerMaskClass.HighPolyWithTerrainMask
+                            );
+
+                            if (!blocked)
+                            {
+                                mcsAILeadPlayer.CalcGoalEnemy(target);
+                                break;
+                            }
+                        }
+
+                        yield return publicTime;
+                    }
+                }
+                else
+                {
+                    yield return null;
+                    continue;
+                }
+            }
+        }
+    }
+}

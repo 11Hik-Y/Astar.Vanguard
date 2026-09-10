@@ -1,0 +1,26 @@
+
+using System.Threading.Tasks;
+using Astar.Vanguard.Server.Models.Eft.Common.Tables;
+using SPTarkov.DI.Annotations;
+using SPTarkov.Server.Core.Models.Common;
+using SPTarkov.Server.Core.Models.Utils;
+using SPTarkov.Server.Core.Utils;
+
+namespace Astar.Vanguard.Server.Callbacks
+{
+    [Injectable]
+    public class LogCallbacks(
+        HttpResponseUtil httpResponseUtil,
+        ISptLogger<LogCallbacks> logger
+    )
+    {
+        /// <summary>
+        /// 处理 /mcs/client/log
+        /// </summary>
+        public virtual async ValueTask<string> PrintLog(string url, DebugRequestData info, MongoId mcsLeadPlayerId)
+        {
+            logger.Warning("[Mcs-Debug] " + info.Info);
+            return httpResponseUtil.NullResponse();
+        }
+    }
+}

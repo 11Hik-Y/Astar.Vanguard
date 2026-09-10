@@ -1,0 +1,156 @@
+using System.Reflection;
+using EFT;
+using EFT.Interactive;
+using HarmonyLib;
+using Astar.Vanguard.Client.Datas;
+using Astar.Vanguard.Client.Enums;
+using Astar.Vanguard.Client.Extensions;
+using Astar.Vanguard.Client.Mgrs;
+using Astar.Vanguard.Client.Models;
+using Astar.Vanguard.Client.Utils;
+using SPT.Reflection.Patching;
+
+namespace Astar.Vanguard.Client.Patches.Interactive
+{
+    /// <summary>  
+    /// 护航代理破门
+    /// </summary>  
+    public sealed class DoorGetActionsClassPatch : ModulePatch
+    {
+        protected override MethodBase GetTargetMethod() => AccessTools.Method(typeof(GetActionsClass), nameof(GetActionsClass.smethod_14));
+
+        private static McsMgr McsMgr => MgrAccessor.Get<McsMgr>();
+
+        [PatchPostfix]
+        public static void Postfix(GamePlayerOwner owner, Door door, ref ActionsReturnClass __result)
+        {
+            if (door.DoorState != EDoorState.Locked)
+            {
+                return;
+            }
+
+            var doorData = door.GetData();
+            if (doorData == null)
+            {
+                return;
+            }
+
+            var mcsBotPlayers = McsMgr.GetAllMyMcsSquadMembers(out var mcsLeadPlayer);
+            if (mcsLeadPlayer == null)
+            {
+                return;
+            }
+            __result.CurrentActionChanged.Bind(CommandUtils.OnCurrentActionChanged);
+            foreach (var mcsBotPlayer in mcsBotPlayers)
+            {
+                __result.Actions.Add(new ActionsTypesClass
+                {
+                    Name = string.Format(Locales.DOORPROXYCOMMAND_NAME.McsLocalized(), mcsBotPlayer.Profile.McsNickname),
+                    TargetName = Locales.DOORPROXYCOMMAND_TARGETNAME,
+                    Action = () => CommandUtils.Dispatch(
+                        ECommandType.InteractionProxyAction.ToString(),
+                        [mcsBotPlayer],
+                        () => new McsCommandContext { TargetId = doorData.Id() }
+                    ),
+                    Disabled = !mcsBotPlayer.HealthController.IsAlive
+                });
+            }
+        }
+    }
+
+    /// <summary>
+    /// 护航代理拾取战利品
+    /// </summary>
+    public sealed class LootItemGetActionsClassPatch : ModulePatch
+    {
+        protected override MethodBase GetTargetMethod() => AccessTools.Method(typeof(GetActionsClass), nameof(GetActionsClass.smethod_8));
+
+        private static McsMgr McsMgr => MgrAccessor.Get<McsMgr>();
+
+        [PatchPostfix]
+        public static void Postfix(GamePlayerOwner owner, LootItem lootItem, ref ActionsReturnClass __result)
+        {
+            if (lootItem is Corpse)
+            {
+                return;
+            }
+
+            var itemData = lootItem.Item.GetData();
+            if (itemData == null)
+            {
+                return;
+            }
+
+            if (itemData is not LootData lootData)
+            {
+                return;
+            }
+
+            var mcsBotPlayers = McsMgr.GetAllMyMcsSquadMembers(out var mcsLeadPlayer);
+            if (mcsLeadPlayer == null)
+            {
+                return;
+            }
+            __result.CurrentActionChanged.Bind(CommandUtils.OnCurrentActionChanged);
+            foreach (var mcsBotPlayer in mcsBotPlayers)
+            {
+                __result.Actions.Add(new ActionsTypesClass
+                {
+                    Name = string.Format(Locales.LOOTPROXYCOMMAND_NAME.McsLocalized(), mcsBotPlayer.Profile.McsNickname),
+                    TargetName = Locales.LOOTPROXYCOMMAND_TARGETNAME,
+                    Action = () => CommandUtils.Dispatch(
+                        ECommandType.LootProxyAction.ToString(),
+                        [mcsBotPlayer],
+                        () => new McsCommandContext { TargetId = lootData.Item.Id }
+                    ),
+                    Disabled = !mcsBotPlayer.HealthController.IsAlive
+                });
+            }
+        }
+    }
+
+    /// <summary>  
+    /// 护航代理操作固定武器
+    /// </summary>  
+    public sealed class StationaryWeaponGetActionsClassPatch : ModulePatch
+    {
+        protected override MethodBase GetTargetMethod() => AccessTools.Method(typeof(GetActionsClass), nameof(GetActionsClass.smethod_17));
+
+        private static McsMgr McsMgr => MgrAccessor.Get<McsMgr>();
+
+        [PatchPostfix]
+        public static void Postfix(GamePlayerOwner owner, StationaryWeapon stationaryWeapon, ref ActionsReturnClass __result)
+        {
+            var stationaryWeaponData = stationaryWeapon.GetData();
+            if (stationaryWeaponData == null)
+            {
+                return;
+            }
+
+            var mcsBotPlayers = McsMgr.GetAllMyMcsSquadMembers(out var mcsLeadPlayer);
+            if (mcsLeadPlayer == null)
+            {
+                return;
+            }
+            __result.CurrentActionChanged.Bind(CommandUtils.OnCurrentActionChanged);
+            foreach (var mcsBotPlayer in mcsBotPlayers)
+            {
+                __result.Actions.Add(new ActionsTypesClass
+                {
+                    Name = mcsBotPlayer.Profile.McsNickname + " " + Locales.STATIONARYWEAPONPROXYCOMMAND_NAME.McsLocalized(),
+                    TargetName = Locales.STATIONARYWEAPONPROXYCOMMAND_TARGETNAME,
+                    Action = () => CommandUtils.Dispatch(
+                        ECommandType.StationaryWeaponProxyAction.ToString(),
+                        [mcsBotPlayer],
+                        () => new McsCommandContext 
+                        { 
+                            Position = stationaryWeaponData.GetPos(),
+                            TargetId = stationaryWeaponData.Id(),
+                        }
+                    ),
+                    Disabled = !mcsBotPlayer.HealthController.IsAlive
+                });
+            }
+        }
+    }
+}

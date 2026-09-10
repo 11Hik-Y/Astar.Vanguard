@@ -1,0 +1,114 @@
+using System;
+using EFT;
+using Astar.Vanguard.Client.Bots.Brain.Logics;
+using Astar.Vanguard.Client.Extensions;
+using Astar.Vanguard.Client.Models;
+using Astar.Vanguard.Client.Utils;
+using UnityEngine;
+
+namespace Astar.Vanguard.Client.Bots.Brain.Layers
+{
+    public class McsProxyLayer : McsBaseLayer
+    {
+        public McsProxyLayer(BotOwner botOwner, int priority) : base(botOwner, priority)
+        {
+
+        }
+
+        public override void Start()
+        {
+            base.Start();
+            if (McsBotPlayerData != null)
+            {
+                BotOwner.TalkMsg(new McsMsg
+                {
+                    PhraseTrigger = EPhraseTrigger.Going,
+                    Keys = BotOwner.Memory.HaveEnemy ? [Locales.ONFIGHT] : null
+                });
+            }
+        }
+
+        public override Action GetNextAction()
+        {
+            try
+            {
+                var time = Time.time;
+                if (McsBotPlayerData == null)
+                {
+                    return new Action(typeof(HoldPositionLogic), "Mcs:LeadPosNull");
+                }
+
+                if (McsBotPlayerData.HasDecision(Decisions.ShouldHoldPosition))
+                {
+                    return new Action(typeof(HoldPositionLogic), "Mcs:HoldPositionForProxyAction");
+                }
+
+                if (McsBotPlayerData.TargetPos.HasValue)
+                {
+                    if (_nextUpdatePosTime < time)
+                    {
+                        UpdateCommonMoveTarget(McsBotPlayerData.TargetPos, out float nextTime);
+                        _nextUpdatePosTime = time + nextTime;
+                    }
+
+                    if (_currentMoveTarget.HasValue)
+                    {
+                        BotOwner.GoToSomePointData.SetPoint(_currentMoveTarget.Value);
+                        return new Action(typeof(GoToExcuteProxyActionLogic), "Mcs:GoToExcuteProxyAction");
+                    }
+
+                    return new Action(typeof(HoldPositionLogic), "Mcs:CannotFindProxyPos");
+                }
+                else
+                {
+                    return new Action(typeof(HoldPositionLogic), "Mcs:NoProxyTargetPos");
+                }
+            }
+            catch (Exception e)
+            {
+                AstarVanguardPlugin.Logger.LogError(e);
+                return new Action(typeof(HoldPositionLogic), "Mcs:Exception");
+            }
+        }
+
+        public override bool IsActive()
+        {
+            if (!IsMcsBotPlayer)
+            {
+                return false;
+            }
+
+#if DEBUG
+            if (!AstarVanguardPlugin.EnableMcsLayer.Value)
+            {
+                return false;
+            }
+#endif
+
+            if (McsBotPlayerData == null)
+            {
+                return false;
+            }
+
+            if (CanShootNow())
+            {
+                return false;
+            }
+
+            if (!McsBotPlayerData.LeadPlayer.HealthController.IsAlive)
+            {
+                return false;
+            }
+
+            if (McsBotPlayerData.HasDecision(Decisions.ShouldQuestProxyAction) 
+                || McsBotPlayerData.HasDecision(Decisions.ShouldLootProxyAction) 
+                || McsBotPlayerData.HasDecision(Decisions.ShouldInteractionProxyAction)
+                || McsBotPlayerData.HasDecision(Decisions.ShouldStationaryWeaponProxyAction))
+            {
+                return true;
+            }
+
+            return false;
+        }
+    }
+}

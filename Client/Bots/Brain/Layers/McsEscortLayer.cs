@@ -1,0 +1,134 @@
+
+using System;
+using Comfort.Common;
+using EFT;
+using Astar.Vanguard.Client.Bots.Brain.Logics;
+using Astar.Vanguard.Client.Extensions;
+using Astar.Vanguard.Client.Models;
+using Astar.Vanguard.Client.Utils;
+using UnityEngine;
+
+namespace Astar.Vanguard.Client.Bots.Brain.Layers
+{
+    public class McsEscortLayer : McsBaseLayer
+    {
+        public McsEscortLayer(BotOwner botOwner, int priority) : base(botOwner, priority)
+        {
+            
+        }
+
+        public override void Start()
+        {
+            base.Start();
+            if (McsBotPlayerData != null)
+            {
+                McsBotPlayerData.IsLooting = false;
+                BotOwner.TalkMsg(new McsMsg
+                {
+                    PhraseTrigger = EPhraseTrigger.FollowMe
+                });
+            }
+        }
+
+        public override Action GetNextAction()
+        {
+            try
+            {
+                var time = Time.time;
+                if (McsBotPlayerData == null)
+                {
+                    return new Action(typeof(HoldPositionLogic), "Mcs:Uninitialized");
+                }
+
+                if (McsBotPlayerData.HasDecision(Decisions.ShouldEscortToBtr))
+                {
+                    var btrController = Singleton<GameWorld>.Instance.BtrController;
+                    var side = btrController.BtrView.GetBtrSide(1);
+                    if (side == null)
+                    {
+                        return new Action(typeof(HoldPositionLogic), "Mcs:CannotFindBtrSide");
+                    }
+
+                    var doorPos = side.GoInPoints().Item1;
+                    if (_nextUpdatePosTime < time)
+                    {
+                        McsBotPlayerData.TargetPos = doorPos;
+                        UpdateEscortMoveTarget(McsBotPlayerData.TargetPos, out float nextTime);
+                        _nextUpdatePosTime = time + nextTime;
+                    }
+
+                    if (_currentMoveTarget.HasValue)
+                    {
+                        BotOwner.GoToSomePointData.SetPoint(_currentMoveTarget.Value);
+                        return new Action(typeof(EscortToPointByWayLogic), "Mcs:EscortToBtr");
+                    }
+
+                    return new Action(typeof(HoldPositionLogic), "Mcs:CannotFindEscortNearPath");
+                }
+
+                if (McsBotPlayerData.TargetPos.HasValue)
+                {
+                    if (_nextUpdatePosTime < time)
+                    {
+                        UpdateEscortMoveTarget(McsBotPlayerData.TargetPos, out float nextTime);
+                        _nextUpdatePosTime = time + nextTime;
+                    }
+
+                    if (_currentMoveTarget.HasValue)
+                    {
+                        BotOwner.GoToSomePointData.SetPoint(_currentMoveTarget.Value);
+                        return new Action(typeof(EscortToPointByWayLogic), "Mcs:EscortToPoint");
+                    }
+
+                    return new Action(typeof(HoldPositionLogic), "Mcs:CannotFindEscortNearPath");
+                }
+                else
+                {
+                    return new Action(typeof(HoldPositionLogic), "Mcs:CannotFindEscortPos");
+                }
+            }
+            catch (Exception e)
+            {
+                AstarVanguardPlugin.Logger.LogError(e);
+                return new Action(typeof(HoldPositionLogic), "Mcs:Exception");
+            }
+        }
+
+        public override bool IsActive()
+        {
+            if (!IsMcsBotPlayer)
+            {
+                return false;
+            }
+
+#if DEBUG
+            if (!AstarVanguardPlugin.EnableMcsLayer.Value)
+            {
+                return false;
+            }
+#endif
+
+            if (McsBotPlayerData == null)
+            {
+                return false;
+            }
+
+            if (CanShootNow())
+            {
+                return false;
+            }
+
+            if (!McsBotPlayerData.LeadPlayer.HealthController.IsAlive)
+            {
+                return false;
+            }
+
+            if ((McsBotPlayerData.HasDecision(Decisions.ShouldEscort) && McsBotPlayerData.TargetPos.HasValue) || McsBotPlayerData.HasDecision(Decisions.ShouldEscortToBtr))
+            {
+                return true;
+            }
+
+            return false;
+        }
+    }
+}

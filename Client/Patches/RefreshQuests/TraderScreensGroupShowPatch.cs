@@ -1,0 +1,25 @@
+
+using System.Reflection;
+using EFT.UI;
+using HarmonyLib;
+using Astar.Vanguard.Client.Events;
+using Astar.Vanguard.Client.Mgrs;
+using SPT.Reflection.Patching;
+
+namespace Astar.Vanguard.Client.Patches.RefreshQuests
+{
+    /// <summary>
+    /// 用于在打开商人界面时刷新
+    /// </summary>
+    public sealed class TraderScreensGroupShowPatch : ModulePatch
+    {
+        protected override MethodBase GetTargetMethod() => AccessTools.Method(typeof(TraderScreensGroup), nameof(TraderScreensGroup.Show), [typeof(TraderScreensGroup.GClass3888)]);
+
+        [PatchPostfix]
+        public static void Postfix(TraderScreensGroup.GClass3888 controller)
+        {
+            EventMgr.Notify(new UpdateProfileEvent());
+            EventMgr.Notify(new UpdateDailyQuestsEvent());
+        }
+    }
+}

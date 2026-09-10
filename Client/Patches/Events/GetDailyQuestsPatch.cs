@@ -1,0 +1,45 @@
+using System.Reflection;
+using System.Threading.Tasks;
+using HarmonyLib;
+using SPT.Reflection.Patching;
+
+namespace Astar.Vanguard.Client.Patches.Events
+{
+    /// <summary>
+    /// 修改特定的订单任务为星锋商人的Id
+    /// </summary>
+    public sealed class GetDailyQuestsPatch : ModulePatch
+    {
+        protected override MethodBase GetTargetMethod() => AccessTools.Method(typeof(SessionBackendClass), nameof(SessionBackendClass.GetDailyQuests));
+
+        [PatchPostfix]
+        public static void Postfix(ref Task<DailyQuestClass[]> __result)
+        {
+            __result = RewriteOrderTraderIdAsync(__result);
+        }
+
+        private static async Task<DailyQuestClass[]> RewriteOrderTraderIdAsync(Task<DailyQuestClass[]> original)
+        {
+            var result = await original;
+
+            if (result == null)
+            {
+                return result;
+            }
+
+            foreach (var dailyQuestClass in result)
+            {
+                if (dailyQuestClass.Name == "Order")
+                {
+                    foreach (var quest in dailyQuestClass.Quests)
+                    {
+                        quest.TraderId = AstarVanguardPlugin.VanguardTraderId;
+                    }
+                    break;
+                }
+            }
+
+            return result;
+        }
+    }
+}

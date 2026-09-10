@@ -1,0 +1,33 @@
+namespace Astar.Vanguard.Client.Enums
+{
+    public enum ECommandType
+    {
+        Teleport,
+        GoToPoint,
+        HoldPosition,
+        Regroup,
+        ReportAboutEnemy,
+        OnYourOwn,
+        EscortWorld,
+        GoToExfil,
+        AimingBodyPart,
+        QuestProxyAction,
+        LootProxyAction,
+        InteractionProxyAction,
+        EndProxyAction,
+        DropTargetLoot,
+        ReportAboutSelf,
+        ClearArea,
+        OpenInventory,
+        ChangeFormation,
+        StationaryWeaponProxyAction,
+        FollowMe,
+        EscortBtr,
+        ExcludeOrTakeOver,
+#if DEBUG
+        DebugSpawnAI,
+        DebugTeleport,
+        DebugInitAirdrop,
+#endif
+    }
+}

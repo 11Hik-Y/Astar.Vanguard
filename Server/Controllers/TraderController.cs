@@ -1,0 +1,41 @@
+
+using System.Threading.Tasks;
+using Astar.Vanguard.Server.Models.Eft.Trader;
+using SPTarkov.DI.Annotations;
+using SPTarkov.Server.Core.Models.Common;
+using SPTarkov.Server.Core.Models.Eft.Common.Tables;
+using SPTarkov.Server.Core.Models.Eft.ItemEvent;
+
+namespace Astar.Vanguard.Server.Controllers
+{
+    [Injectable]
+    public class TraderController(
+        Services.TraderService traderService
+    )
+    {
+        public void FriendlyFirePenalty(MongoId mcsLeadPlayerId, FriendlyFirePenaltyRequestData info)
+        {
+            traderService.FriendlyFirePenalty(mcsLeadPlayerId, info);
+        }
+
+        public void Compensation(CompensationRequestData info)
+        {
+            traderService.Compensation(info);
+        }
+
+        public async Task<ProfileChange> UpdateProfile(MongoId mcsLeadPlayerId)
+        {
+            return await traderService.UpdateProfile(mcsLeadPlayerId);
+        }
+
+        public TraderAssort GetMcsBotPlayerInventoryModeAssort()
+        {
+            return traderService.GetMcsBotPlayerInventoryModeAssort();
+        }
+
+        public void ModifyPunishmentMulti(double diff, bool isIncrease = true)
+        {
+            traderService.ModifyPunishmentMulti(diff, isIncrease);
+        }
+    }
+}

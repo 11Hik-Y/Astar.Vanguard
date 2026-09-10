@@ -1,0 +1,263 @@
+
+
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using EFT;
+using Astar.Vanguard.Client.Models;
+using Newtonsoft.Json;
+using SPT.Common.Http;
+
+namespace Astar.Vanguard.Client.Utils
+{
+    public static class McsRequestHandler
+    {
+        public static T2 PostJson<T1, T2>(string path, T1 t1)
+        {
+            return Task.Run(() => PostJsonAsync<T1, T2>(path, t1)).GetAwaiter().GetResult();
+        }
+
+        public static async Task<T2> PostJsonAsync<T1, T2>(string path, T1 t1)
+        {
+            var serialized = JsonConvert.SerializeObject(t1);
+            var response = await RequestHandler.PostJsonAsync(path, serialized);
+            var data = JsonConvert.DeserializeObject<T2>(response);
+            return data;
+        }
+
+        public static async Task PostJsonAsync<T1>(string path, T1 t1)
+        {
+            var serialized = JsonConvert.SerializeObject(t1);
+            await RequestHandler.PostJsonAsync(path, serialized);
+        }
+
+        public static async Task PostJsonAsync(string path)
+        {
+            await RequestHandler.PostJsonAsync(path, "");
+        }
+
+        public static T GetJson<T>(string path)
+        {
+            return Task.Run(() => GetJsonAsync<T>(path)).GetAwaiter().GetResult();
+        }
+
+        public static async Task<T> GetJsonAsync<T>(string path)
+        {
+            var response = await RequestHandler.GetJsonAsync(path);
+            var data = JsonConvert.DeserializeObject<T>(response);
+            return data;
+        }
+
+        public static string PutJson<T>(string path, T t)
+        {
+            return Task.Run(() => PutJsonAsync(path, t)).GetAwaiter().GetResult();
+        }
+
+        public static async Task<string> PutJsonAsync<T>(string path, T t)
+        {
+            var serialized = JsonConvert.SerializeObject(t);
+            var response = await RequestHandler.PutJsonAsync(path, serialized);
+            return response;
+        }
+
+        public static async Task<Dictionary<MongoID, Profile[]>> GetMcsBotPlayers(McsBotPlayerType mcsBotPlayerType)
+        {
+            var response = await PostJsonAsync<McsBotPlayerType, Dictionary<MongoID, CompleteProfileDescriptorClass[]>>("/mcs/client/game/bot/generate", mcsBotPlayerType);
+
+            if (response == null)
+            {
+                return new();
+            }
+
+            return response.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value.Select(desc => new Profile(desc)).ToArray()
+            );
+        }
+
+        public static async Task<CompleteProfileDescriptorClass[]> GetMcsBotPlayerProfiles()
+        {
+            var response = await GetJsonAsync<CompleteProfileDescriptorClass[]>("/mcs/client/game/profile/list");
+
+            if (response == null)
+            {
+                return [];
+            }
+
+            return response;
+        }
+
+        public static bool VerifyMcsBotPlayerAid(McsBotPlayerAid mcsBotPlayerAid)
+        {
+            var response = PostJson<McsBotPlayerAid, bool>("/mcs/client/game/aid/verify", mcsBotPlayerAid);
+
+            return response;
+        }
+
+        public static bool RemoveMcsBotPlayerAid(McsBotPlayerAid mcsBotPlayerAid)
+        {
+            var response = PostJson<McsBotPlayerAid, bool>("/mcs/client/game/aid/remove", mcsBotPlayerAid);
+
+            return response;
+        }
+
+        public static async Task<ConcurrentDictionary<MongoID, McsBotPlayerConfig>> GetMcsBotPlayerConfigs()
+        {
+            var response = await GetJsonAsync<ConcurrentDictionary<MongoID, McsBotPlayerConfig>>("/mcs/singleplayer/settings/bot/get");
+
+            if (response == null)
+            {
+                return new();
+            }
+
+            return response;
+        }
+
+        public static async Task UploadMcsBotPlayerConfig(McsBotPlayerConfig mcsBotPlayerConfig)
+        {
+            await PostJsonAsync("/mcs/singleplayer/settings/bot/upload", mcsBotPlayerConfig);
+        }
+
+        public static async Task ClearGroupMember()
+        {
+            await PostJsonAsync("/mcs/client/match/raid/abort");
+        }
+
+        public static async Task SendPunishRequest(FriendlyFirePenalty friendlyFirePenalty)
+        {
+            await PostJsonAsync("/mcs/client/trading/api/friendlyFirePenalty", friendlyFirePenalty);
+        }
+
+        public static async Task SendCompensationRequest(Compensation compensation)
+        {
+            await PostJsonAsync("/mcs/client/trading/api/compensation", compensation);
+        }
+
+        public static async Task<ProfileChangesPocoClass> UpdateProfile()
+        {
+            var response = await GetJsonAsync<ProfileChangesPocoClass>("/mcs/client/trading/api/updateProfile");
+
+            if (response == null)
+            {
+                return new();
+            }
+
+            return response;
+        }
+
+        public static async Task<List<MongoID>> RequestMySquadMcsBotPlayerIds(McsBotPlayerType mcsBotPlayerType)
+        {
+            var response = await PostJsonAsync<McsBotPlayerType, List<MongoID>>("/mcs/singleplayer/info/bot/get", mcsBotPlayerType);
+
+            if (response == null)
+            {
+                return new();
+            }
+
+            return response;
+        }
+
+        public static async Task SendLog(string text)
+        {
+            await PostJsonAsync("/mcs/client/log", new DebugInfo
+            {
+                Info = text
+            });
+        }
+
+        public static async Task<HashSet<MongoID>> GetAllMcsBotPlayerIdInRaid(McsBotPlayerType mcsBotPlayerType)
+        {
+            var response = await PostJsonAsync<McsBotPlayerType, HashSet<MongoID>>("/mcs/singleplayer/info/botids/get", mcsBotPlayerType);
+
+            if (response == null)
+            {
+                return new();
+            }
+
+            return response;
+        }
+
+        public static Dictionary<string, SPTServerModInfo> GetLoadedServerMods()
+        {
+            try
+            {
+                var response = GetJson<Dictionary<string, SPTServerModInfo>>("/launcher/server/loadedServerMods");
+                return response;
+            }
+            catch
+            {
+                return new Dictionary<string, SPTServerModInfo>();
+            }
+        }
+
+        public static McsPluginClientConfig GetMcsPluginClientConfig()
+        {
+            try
+            {
+                var response = GetJson<McsPluginClientConfig>("/mcs/client/config");
+                return response;
+            }
+            catch
+            {
+                return new();
+            }
+        }
+
+        public static bool SettleMcsOrder(McsBotPlayerAid mcsBotPlayerAid)
+        {
+            var response = PostJson<McsBotPlayerAid, bool>("/mcs/client/order/settle", mcsBotPlayerAid);
+
+            return response;
+        }
+
+        public static bool RenewMcsOrder(McsBotPlayerAid mcsBotPlayerAid)
+        {
+            var response = PostJson<McsBotPlayerAid, bool>("/mcs/client/order/renew", mcsBotPlayerAid);
+
+            return response;
+        }
+
+        public static VanguardCommandCenterSnapshot GetVanguardCommandCenter()
+        {
+            var snapshot = GetJson<VanguardCommandCenterSnapshot>(
+                "/astar/vanguard/command-center"
+            );
+            return snapshot ?? throw new System.InvalidOperationException(
+                "Vanguard command-center returned an empty snapshot."
+            );
+        }
+
+        public static VanguardCommandCenterSnapshot RecruitVanguardOperator(
+            string operatorId
+        )
+        {
+            var snapshot = PostJson<VanguardRecruitRequest, VanguardCommandCenterSnapshot>(
+                "/astar/vanguard/recruit",
+                new VanguardRecruitRequest
+                {
+                    OperatorId = operatorId
+                }
+            );
+            return snapshot ?? throw new System.InvalidOperationException(
+                "Vanguard recruit returned an empty snapshot."
+            );
+        }
+
+        public static VanguardCommandCenterSnapshot SetVanguardDeployment(
+            List<string> operatorIds
+        )
+        {
+            var snapshot = PostJson<VanguardDeploymentRequest, VanguardCommandCenterSnapshot>(
+                "/astar/vanguard/deployment",
+                new VanguardDeploymentRequest
+                {
+                    OperatorIds = operatorIds
+                }
+            );
+            return snapshot ?? throw new System.InvalidOperationException(
+                "Vanguard deployment returned an empty snapshot."
+            );
+        }
+    }
+}

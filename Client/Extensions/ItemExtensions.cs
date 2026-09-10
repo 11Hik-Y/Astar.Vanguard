@@ -1,0 +1,255 @@
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using Comfort.Common;
+using EFT;
+using EFT.InventoryLogic;
+using EFT.UI.DragAndDrop;
+using Astar.Vanguard.Client.Datas;
+using Astar.Vanguard.Client.Mgrs;
+using Astar.Vanguard.Client.Utils;
+
+namespace Astar.Vanguard.Client.Extensions
+{
+    public static class ItemExtensions
+    {
+        private static readonly ConditionalWeakTable<Item, ItemData> _datas = new();
+
+        private static McsMgr McsMgr => MgrAccessor.Get<McsMgr>();
+
+        extension(Item item)
+        {
+            public ItemData GetData()
+            {
+                return _datas.TryGetValue(item, out var itemData) ? itemData : item.InitData();
+            }
+
+            public IEnumerable<ItemData> GetAllDatas()
+            {
+                foreach (var subItem in item.GetAllItems())
+                {
+                    ItemData data = GetData(subItem);
+                    if (data != null)
+                    {
+                        yield return data;
+                    }
+                }
+            }
+
+            public bool McsRemoveItem()
+            {
+                try
+                {
+                    var iItemOwner = item.Parent.GetOwner();
+                    if (iItemOwner is not TraderControllerClass traderControllerClass)
+                    {
+                        return false;
+                    }
+
+                    var result = InteractionsHandlerClass.Discard(item, traderControllerClass, false);
+                    if (result.Error != null)
+                    {
+                        return false;
+                    }
+
+                    result.Value.RaiseEvents(traderControllerClass, CommandStatus.Begin);
+                    result.Value.RaiseEvents(traderControllerClass, CommandStatus.Succeed);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            private ItemData InitData()
+            {
+                if (item.IsPlayerInventory)
+                {
+                    var gameWorld = Singleton<GameWorld>.Instance;
+
+                    var profileId = item.Owner switch
+                    {
+                        CorpseTraderControllerClass c => c?.KilledProfileID,
+                        _ => item.Owner?.ID
+                    };
+
+                    var player = !string.IsNullOrEmpty(profileId) ? gameWorld.GetEverExistedPlayerByID(profileId) : null;
+
+                    if (player == null)
+                    {
+                        return null;
+                    }
+
+                    PlayerData playerData;
+                    if (player.IsAI)
+                    {
+                        if (McsMgr.IsMcsBotPlayer(player.ProfileId))
+                        {
+                            var McsLeadPlayer = McsMgr.GetMcsLeadPlayerByMcsBotPlayerId(player.ProfileId);
+                            playerData = new McsBotPlayerData(McsMgr.GetMcsLeadPlayerByMcsBotPlayerId(player.ProfileId), McsMgr.GetMcsAILeadPlayerByMcsLeadPlayerId(McsLeadPlayer.ProfileId), player, item);
+                            _datas.Add(item, playerData);
+                            return playerData;
+                        }
+                    }
+                    playerData = new PlayerData(player, item);
+                    _datas.Add(item, playerData);
+                    return playerData;
+                }
+
+                var lootData = new LootData(item, ContainsBestPrice(item));
+                _datas.Add(item, lootData);
+                return lootData;
+            }
+
+            public bool IsPlayerInventory => item.StringTemplateId == ItemTpl.DefaultInventory;
+
+            public TraderOffer ContainsBestPrice()
+            {
+                TraderOffer offer;
+                var gameloop = GameLoop.Instance;
+                if (string.IsNullOrEmpty(item.StringTemplateId))
+                {
+                    return new TraderOffer();
+                }
+                else
+                {
+                    var itemType = ItemViewFactory.GetItemType(item.GetType());
+                    switch (itemType)
+                    {
+                        case EItemType.Armor:
+                        case EItemType.Ammo:
+                        case EItemType.Weapon:
+                        case EItemType.Magazine:
+                            {
+                                offer = GetBestTraderOffer(item);
+                                return offer == null ? new TraderOffer() : offer;
+                            }
+                        default:
+                            {
+                                if (!gameloop.ItemBestPriceDict.TryGetValue(item.TemplateId, out offer))
+                                {
+                                    offer = GetBestTraderOffer(item);
+                                    if (offer != null)
+                                    {
+                                        gameloop.ItemBestPriceDict.Add(item.TemplateId, offer);
+                                    }
+                                    else
+                                    {
+                                        if (!item.IsMoney())
+                                        {
+                                            gameloop.ItemBestPriceDict.Add(item.TemplateId, new TraderOffer());
+                                        }
+                                    }
+                                }
+                                return offer;
+                            }
+                    }
+                }
+            }
+
+            public TraderOffer GetBestTraderOffer()
+            {
+                foreach (var offer in item.GetAllTraderOffers())
+                {
+                    return offer;
+                }
+                return null;
+            }
+
+            public IEnumerable<TraderOffer> GetAllTraderOffers()
+            {
+                if (item.Owner?.OwnerType is EOwnerType.RagFair || item.Owner?.OwnerType is EOwnerType.Trader
+                    && (item.StackObjectsCount > 1 || item.UnlimitedCount))
+                {
+                    item = item.CloneItem();
+                    item.StackObjectsCount = 1;
+                    item.UnlimitedCount = false;
+                }
+
+                var offers = new List<TraderOffer>();
+                foreach (var trader in GameLoop.Instance.Session.Traders)
+                {
+                    if (trader.Settings.AvailableInRaid)
+                    {
+                        continue;
+                    }
+
+                    var offer = item.GetTraderOffer(trader);
+                    if (offer != null)
+                    {
+                        offers.Add(offer);
+                    }
+                }
+
+                offers.Sort((a, b) => b.Price.CompareTo(a.Price));
+                return offers;
+            }
+
+            public TraderOffer GetTraderOffer(TraderClass trader)
+            {
+                try
+                {
+                    var price = trader.GetUserItemPrice(item);
+                    var currency = TraderUtilsClass.GetCurrencyCharById(price.Value.CurrencyId.Value) switch
+                    {
+                        "€" => ECurrencyType.EUR,
+                        "$" => ECurrencyType.USD,
+                        "<sprite=0>" or "GP" => ECurrencyType.GP,
+                        _ => ECurrencyType.RUB
+                    };
+                    return price.HasValue ? new TraderOffer
+                    (
+                        price.Value.Amount,
+                        item.Width * item.Height,
+                        currency,
+                        trader.LocalizedName
+                    ) : new TraderOffer();
+                }
+                catch
+                {
+                    return new TraderOffer();
+                }
+            }
+
+            public bool IsMoney()
+            {
+                var templateId = item.StringTemplateId;
+                if (templateId != null)
+                {
+                    return Classification.MoneyItems.Contains(templateId);
+                }
+                return false;
+            }
+
+            public IEnumerable<Item> GetAllChildItemsOnly()
+            {
+                if (item is ContainerClass collection)
+                {
+                    foreach (var container in collection.Containers)
+                    {
+                        foreach (var child in container.Items)
+                        {
+                            foreach (var descendant in child.GetAllItems())
+                            {
+                                yield return descendant;
+                            }
+                        }
+                    }
+                }
+            }
+
+            public bool IncludeTargetItem(Item target)
+            {
+                var items = item.GetAllChildItemsOnly();
+                foreach (var _item in items)
+                {
+                    if (_item.Id == target.Id)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+    }
+}
